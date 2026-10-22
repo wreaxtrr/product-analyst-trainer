@@ -1,0 +1,269 @@
+nodes:
+
+  - id: ml.framing
+    theory: |
+      ## Окно таргета меняет задачу
+
+      «Отток = нет заказов 30 дней» и «отток = нет заказов 90 дней» — две разные модели. Короткое окно даёт больше «уходящих», среди которых много просто редких покупателей, длинное — реагирует медленно. Выбор окна согласуют с тем, **когда** бизнес может вмешаться: кампания удержания за 2 недели до ухода полезнее, чем «предсказание» уже ушедших.
+
+      ## Дисбаланс классов
+
+      Если положительных 2%:
+
+      - метрики — PR AUC, precision@k, а не accuracy;
+      - модели — `class_weight='balanced'` или взвешивание, но помни, что взвешивание портит калибровку вероятностей;
+      - валидация — стратифицированная, чтобы в каждом фолде были положительные.
+
+      ## Стоимость ошибок
+
+      Ложная тревога и пропуск почти никогда не стоят одинаково. Для фрода пропуск дороже, для промо-рассылки — ложная тревога (дарим скидку тем, кто и так купит). Это определяет порог, а иногда и саму метрику.
+
+      ## Когда ML не нужна
+
+      - Есть простое правило с сопоставимым качеством.
+      - Нет действия, которое изменится от прогноза.
+      - Нет данных, чтобы проверить эффект (нельзя провести эксперимент).
+      - Стоимость поддержки больше выгоды.
+    tasks:
+      - type: case
+        q: Сервис подписок хочет «модель, которая предсказывает отток».
+        steps:
+          - q: Какой вопрос задать первым?
+            options:
+              - Какую библиотеку использовать
+              - Что компания будет делать с прогнозом и когда может вмешаться
+              - Сколько признаков нужно
+            answer: 1
+            explain: Без действия модель бесполезна, а момент вмешательства определяет окно таргета и дату среза.
+          - q: Вмешаться можно за 14 дней до окончания оплаченного периода (скидка на продление). Как определить таргет?
+            options:
+              - Ушёл ли пользователь когда-нибудь
+              - Не продлил ли подписку в ближайшее окончание периода, при срезе за 14 дней до него
+              - Сколько дней пользователь активен
+            answer: 1
+            explain: Таргет и срез привязаны к моменту, когда решение можно принять.
+          - q: Не продлевают 8%. Какая офлайн-метрика удобнее для отбора клиентов на скидку?
+            options:
+              - Accuracy
+              - Precision и recall в топ-k или PR AUC, а итоговое решение — по ожидаемой прибыли кампании
+              - R²
+            answer: 1
+            explain: При 8% положительных accuracy ничего не скажет. Важно качество верхушки списка.
+        explain: Постановка «от действия» — главное, что отличает полезную модель от упражнения.
+      - type: single
+        q: Модель обучили с `class_weight='balanced'`, и её вероятности используются в формуле ожидаемой прибыли. В чём проблема?
+        options:
+          - Проблем нет
+          - Взвешивание классов смещает вероятности — они перестают быть откалиброванными; нужна повторная калибровка или модель без весов
+          - Модель не обучится
+          - Нужно больше признаков
+        answer: 1
+        explain: С весами модель «думает», что положительных больше, и завышает вероятности. Для ранжирования это не страшно, для денежных расчётов — критично.
+
+  - id: ml.linear
+    theory: |
+      ## Категориальные признаки и отношения шансов
+
+      После one-hot кодирования (`drop_first=True`) коэффициент категории — разница с **базовой** категорией. В логистической регрессии $e^{\beta}$ — во сколько раз шансы события в этой категории выше, чем в базовой, **при прочих равных**.
+
+      ## Логарифмический таргет
+
+      Если таргет — выручка, часто моделируют $\ln(y)$. Тогда коэффициент β означает изменение y примерно на $100\% \cdot (e^\beta - 1)$ при росте признака на единицу. При β = 0.05 это +5.1%.
+
+      ## Взаимодействия
+
+      Линейная модель не видит, что эффект скидки зависит от сегмента. Это добавляют явно: признак `discount × is_new`. Деревья и бустинг находят взаимодействия сами — одна из причин, почему они сильнее на табличных данных.
+    tasks:
+      - type: python
+        q: |
+          Обучи `LogisticRegression(max_iter=1000)` на **всём** `churn_features`: признаки — числовые `num`, стандартизованные (`StandardScaler`), плюс one-hot канала (`pd.get_dummies(churn_features['channel'], prefix='ch', drop_first=True, dtype=float)` — базовая категория `ads`). Положи в `result` **отношение шансов** для `ch_organic` (exp коэффициента).
+        tables: [churn_features]
+        packages: [scikit-learn]
+        starter: |
+          from sklearn.linear_model import LogisticRegression
+          from sklearn.preprocessing import StandardScaler
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          Xn = pd.DataFrame(StandardScaler().fit_transform(churn_features[num]), columns=num)
+          Xc = pd.get_dummies(churn_features['channel'], prefix='ch', drop_first=True, dtype=float)
+          X = pd.concat([Xn, Xc], axis=1)
+          y = churn_features['churned']
+
+          result = ...
+        solution: |
+          from sklearn.linear_model import LogisticRegression
+          from sklearn.preprocessing import StandardScaler
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          Xn = pd.DataFrame(StandardScaler().fit_transform(churn_features[num]), columns=num)
+          Xc = pd.get_dummies(churn_features['channel'], prefix='ch', drop_first=True, dtype=float)
+          X = pd.concat([Xn, Xc], axis=1)
+          y = churn_features['churned']
+          model = LogisticRegression(max_iter=1000).fit(X, y)
+          coefs = pd.Series(model.coef_[0], index=X.columns)
+          result = float(np.exp(coefs['ch_organic']))
+        test: |
+          assert abs(float(result) - float(expected)) / float(expected) < 0.03, f'Получено {float(result):.3f}, ожидалось ≈ {float(expected):.3f}'
+        explain: Отношение шансов меньше 1 — при прочих равных у органических клиентов шансы уйти ниже, чем у пришедших из рекламы. Это согласуется с тем, как платный трафик удерживается в остальных уроках.
+      - type: number
+        q: Модель предсказывает `ln(выручки)`. Коэффициент признака «подписан на рассылку» равен 0.05. На сколько **процентов** в среднем выше выручка у подписанных при прочих равных? С точностью до десятых.
+        answer: 5.1
+        atol: 0.06
+        unit: '%'
+        explain: 100 · (e^0.05 − 1) ≈ 5.13%. Для маленьких β процент примерно равен 100·β, для больших — разница существенна.
+
+  - id: ml.metrics
+    theory: |
+      ## Порог по деньгам
+
+      ::widget threshold-cost
+
+      ## Калибровка и Brier score
+
+      **Brier score** — средний квадрат ошибки вероятности: $\frac{1}{n}\sum (p_i - y_i)^2$. Чем меньше, тем лучше. В отличие от AUC, он штрафует и за плохое ранжирование, и за плохую калибровку.
+
+      Калибровку проверяют графиком: разбивают прогнозы на 10 корзин и сравнивают средний прогноз с долей фактических единиц в корзине. Точки должны лежать на диагонали.
+
+      ## Lift и gain
+
+      - **Lift в топ-k%** — во сколько раз доля положительных в топ-k% выше средней. Lift 3 в верхнем дециле — модель втрое эффективнее случайного отбора.
+      - **Gain-кривая** — какую долю всех положительных находим, охватывая топ-k% по скору.
+
+      Бизнесу эти графики понятнее, чем ROC: «обзвонив 20% клиентов, найдём 55% будущих уходящих».
+
+      ## Метрики регрессии
+
+      | Метрика | Свойство |
+      |---|---|
+      | MAE | в единицах таргета, устойчива к выбросам |
+      | RMSE | сильно штрафует большие ошибки |
+      | MAPE / WAPE | относительные, для разных масштабов |
+      | R² | доля объяснённой дисперсии, без единиц |
+    tasks:
+      - type: python
+        q: |
+          Посчитай **Brier score** логистической регрессии из уроков (числовые `num`, `make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))`, разбиение `test_size=0.3, random_state=42, stratify=y`) на тесте. Положи в `result`.
+        tables: [churn_features]
+        packages: [scikit-learn]
+        starter: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+          from sklearn.metrics import brier_score_loss
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X, y = churn_features[num], churn_features['churned']
+
+          result = ...
+        solution: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+          from sklearn.metrics import brier_score_loss
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X, y = churn_features[num], churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+          model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)).fit(X_tr, y_tr)
+          result = brier_score_loss(y_te, model.predict_proba(X_te)[:, 1])
+        test: |
+          assert abs(float(result) - float(expected)) < 0.003, f'Brier {float(result):.4f}, ожидалось ≈ {float(expected):.4f}'
+        explain: Сравни с «наивным» прогнозом — константой, равной доле оттока p. Его Brier — p(1 − p) ≈ 0.23. Модель лучше, но не идеальна. Brier — хорошая единая метрика, когда важны сами вероятности.
+      - type: number
+        q: В базе 10 000 клиентов, уходят 15%. В топ-10% по скору модели ушли 540 человек. Чему равен **lift** верхнего дециля?
+        answer: 3.6
+        atol: 0.01
+        explain: Доля уходящих в топе — 540 / 1 000 = 54%. Lift = 54% / 15% = 3.6. Обзвон топ-10% в 3.6 раза эффективнее случайного.
+
+  - id: ml.validation
+    theory: |
+      ## Вложенная кросс-валидация
+
+      Если на одних и тех же фолдах подбирать гиперпараметры и оценивать качество, оценка слегка оптимистична. Честный вариант — **вложенная** кросс-валидация: внешний цикл оценивает качество, внутренний (на каждой обучающей части) подбирает параметры. Для отчёта о качестве важно, для повседневной работы часто хватает отложенного теста.
+
+      ## Утечка через target encoding
+
+      Кодирование категории средним таргетом (средний отток по городу) — мощный признак. Но если считать средние по всему датасету, в признак попадает таргет самих строк. Правильно — считать внутри фолдов (out-of-fold) или с регуляризацией, как в CatBoost (ordered target statistics).
+
+      ## Дрейф и валидация во времени
+
+      Даже без утечек модель стареет: меняется поведение, ассортимент, маркетинг. Перед запуском полезно проверить, как модель, обученная на январе–марте, работает на апреле, мае и июне, — насколько быстро падает качество. Это определяет частоту переобучения.
+    tasks:
+      - type: order
+        q: Расставь шаги честной оценки модели в правильном порядке.
+        items:
+          - Отложить тестовую выборку (по времени, если есть время)
+          - На оставшихся данных подобрать признаки и гиперпараметры кросс-валидацией
+          - Обучить финальную модель на всех данных кроме теста
+          - Один раз оценить качество на тесте
+          - Сравнить с бейзлайном и решить, стоит ли модель запуска
+        explain: Тест используется ровно один раз и в самом конце. Всё, что подбиралось по нему, перестаёт быть честной оценкой.
+      - type: single
+        q: Признак «средний отток в городе клиента» посчитали по всему датасету и добавили в модель. AUC вырос с 0.77 до 0.83. Что подозреваем?
+        options:
+          - Признак отличный, можно катить
+          - Утечку таргета через target encoding — среднее включает таргет самой строки; нужно out-of-fold кодирование
+          - Переобучение из-за малого числа деревьев
+          - Ошибку в AUC
+        answer: 1
+        explain: Особенно сильна утечка для редких категорий, где строка составляет заметную часть среднего.
+
+  - id: ml.trees
+    theory: |
+      ## Permutation importance
+
+      Перемешиваем значения одного признака в валидационной выборке и смотрим, насколько упало качество. Чем больше падение, тем важнее признак **для этой модели**. В отличие от impurity-важности, метод не смещён в пользу признаков с большим числом уникальных значений. Минус — коррелированные признаки «делят» важность: перемешали один, а второй его заменил.
+
+      ## Partial dependence и SHAP
+
+      - **Partial dependence** — как меняется средний прогноз при изменении признака. Видно, монотонна ли связь и где «пороги».
+      - **SHAP** — вклад каждого признака в каждый отдельный прогноз. Хорош для объяснения конкретных решений («клиенту дали скидку, потому что давно не заказывал и было два обращения в поддержку»).
+
+      ## Монотонные ограничения
+
+      Бизнес часто требует логики: «чем дольше клиент не заказывал, тем выше риск». Бустинги (LightGBM, XGBoost, CatBoost, sklearn HistGradientBoosting) позволяют задать монотонность по признаку — модель становится понятнее и устойчивее к шуму.
+    tasks:
+      - type: python
+        q: |
+          Обучи `HistGradientBoostingClassifier(random_state=42)` на числовых признаках `num` (разбиение `test_size=0.3, random_state=42, stratify=y`) и посчитай **permutation importance** на тесте: `permutation_importance(model, X_te, y_te, scoring='roc_auc', n_repeats=5, random_state=0)`. Положи в `result` название признака с наибольшей средней важностью.
+        tables: [churn_features]
+        packages: [scikit-learn]
+        starter: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.ensemble import HistGradientBoostingClassifier
+          from sklearn.inspection import permutation_importance
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X, y = churn_features[num], churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+
+          result = ...
+        solution: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.ensemble import HistGradientBoostingClassifier
+          from sklearn.inspection import permutation_importance
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X, y = churn_features[num], churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+          model = HistGradientBoostingClassifier(random_state=42).fit(X_tr, y_tr)
+          imp = permutation_importance(model, X_te, y_te, scoring='roc_auc', n_repeats=5, random_state=0)
+          result = num[int(np.argmax(imp.importances_mean))]
+        explain: Как и в логистической регрессии, давность последнего заказа — главный признак. Совпадение выводов разных моделей — хороший знак, что связь реальная, а не артефакт одной модели.
+      - type: single
+        q: Признаки «заказов за 30 дней» и «заказов за 90 дней» сильно скоррелированы. Permutation importance у каждого — маленькая. Значит ли это, что частота заказов не важна?
+        options:
+          - Да, оба признака бесполезны
+          - Нет — коррелированные признаки «подменяют» друг друга при перемешивании; стоит перемешивать их группой или удалить один и проверить снова
+          - Да, если AUC высокий
+          - Permutation importance всегда врёт
+        answer: 1
+        explain: Важность «делится» между заменяющими друг друга признаками. Групповая перестановка показывает их совместную важность.

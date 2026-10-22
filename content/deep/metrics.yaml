@@ -1,0 +1,353 @@
+nodes:
+
+  - id: metrics.activity
+    theory: |
+      ## Ряд активности «Корзинки»
+
+      ::widget seasonality
+
+      ## Growth accounting
+
+      Изменение MAU раскладывается на четыре потока:
+
+      | Поток | Кто это |
+      |---|---|
+      | **Новые** | активны в этом месяце, зарегистрировались в этом месяце |
+      | **Удержанные** | активны и в прошлом, и в этом месяце |
+      | **Вернувшиеся** | активны в этом месяце, не были в прошлом, зарегистрировались раньше |
+      | **Ушедшие** | были в прошлом месяце, нет в этом |
+
+      $$MAU_t = MAU_{t-1} + \text{новые} + \text{вернувшиеся} - \text{ушедшие}$$
+
+      **Quick ratio** = (новые + вернувшиеся) / ушедшие. Больше 1 — аудитория растёт. Около 1 — продукт «бежит, чтобы оставаться на месте»: всё привлечение уходит на компенсацию оттока.
+
+      ## Кривая power users
+
+      Распределение пользователей по числу активных дней в месяце (L28, L30). Если почти все активны 1–2 дня — продукт используется эпизодически. «Улыбка» с горбом на 20+ днях — есть ядро, для которого продукт стал привычкой. Сравнение этой кривой между месяцами показывает, растёт ли вовлечённость, даже когда DAU стоит на месте.
+    tasks:
+      - type: sql
+        q: |
+          Сделай **growth accounting за июнь 2024** относительно мая. Активность — любое событие в месяце. Колонки: `new` (зарегистрированы в июне), `retained` (активны в мае и в июне), `resurrected` (активны в июне, не активны в мае, зарегистрированы до июня), `churned` (активны в мае, не активны в июне).
+        tables: [events, users]
+        starter: |
+          WITH may AS (
+            SELECT DISTINCT user_id FROM events WHERE ts >= '2024-05-01' AND ts < '2024-06-01'
+          ),
+          jun AS (
+            SELECT DISTINCT user_id FROM events WHERE ts >= '2024-06-01' AND ts < '2024-07-01'
+          )
+          SELECT
+        solution: |
+          WITH may AS (
+            SELECT DISTINCT user_id FROM events WHERE ts >= '2024-05-01' AND ts < '2024-06-01'
+          ),
+          jun AS (
+            SELECT DISTINCT user_id FROM events WHERE ts >= '2024-06-01' AND ts < '2024-07-01'
+          )
+          SELECT
+            (SELECT COUNT(*) FROM jun j JOIN users u USING (user_id) WHERE u.signup_date >= '2024-06-01') AS new,
+            (SELECT COUNT(*) FROM jun j JOIN may m USING (user_id)) AS retained,
+            (SELECT COUNT(*) FROM jun j JOIN users u USING (user_id)
+              WHERE u.signup_date < '2024-06-01' AND j.user_id NOT IN (SELECT user_id FROM may)) AS resurrected,
+            (SELECT COUNT(*) FROM may m WHERE m.user_id NOT IN (SELECT user_id FROM jun)) AS churned
+        explain: |
+          Проверка — MAU июня = MAU мая + new + resurrected − churned. Quick ratio = (new + resurrected) / churned больше 1: аудитория растёт. Но рост держится в основном на новых пользователях. Когда регистрации закончатся (июль в данных), MAU начнёт падать — это видно в ряде активности.
+      - type: sql
+        q: |
+          Построй **кривую power users за июнь 2024**: для каждого числа активных дней (сколько разных дней пользователь открывал приложение в июне) — сколько пользователей. Колонки: `days_active`, `users`. Сортировка по `days_active`.
+        tables: [events]
+        starter: |
+          WITH d AS (
+            SELECT user_id, COUNT(DISTINCT ts::DATE) AS days_active
+            FROM events
+            WHERE ts >= '2024-06-01' AND ts < '2024-07-01'
+            GROUP BY user_id
+          )
+          SELECT
+        solution: |
+          WITH d AS (
+            SELECT user_id, COUNT(DISTINCT ts::DATE) AS days_active
+            FROM events
+            WHERE ts >= '2024-06-01' AND ts < '2024-07-01'
+            GROUP BY user_id
+          )
+          SELECT days_active, COUNT(*) AS users
+          FROM d
+          GROUP BY days_active
+          ORDER BY days_active
+        ordered: true
+        explain: Большинство активны 1–3 дня — для доставки продуктов это нормально. Длинный хвост пользователей с 10+ днями — ядро продукта. Его доля и стоит в центре стратегии удержания.
+      - type: number
+        q: За месяц пришло 1 200 новых пользователей, вернулись 300, ушли 1 000. Чему равен quick ratio?
+        answer: 1.5
+        atol: 0.001
+        explain: (1 200 + 300) / 1 000 = 1.5. Аудитория растёт, но на каждых трёх пришедших двое уходят. Ориентир для здорового роста — quick ratio от 2–4.
+
+  - id: metrics.retention
+    theory: |
+      ## Кривая удержания по дням
+
+      Кроме когортной таблицы, удержание рисуют кривой: доля когорты, активная на день N (N = 1, 3, 7, 14, 30…). Форма кривой важнее любого отдельного числа:
+
+      - **падает к нулю** — продукт не удерживает;
+      - **выходит на плато** — у части аудитории есть устойчивая ценность;
+      - **«улыбка»** — после спада кривая растёт. Так бывает, когда пользователи возвращаются со временем (сезонные покупки, сетевые эффекты) или когда продукт стал лучше для старых когорт. Это лучший сигнал product-market fit.
+
+      ## От какого события считать
+
+      - **От регистрации** — честно для продукта в целом, но смешивает тех, кто так и не начал пользоваться.
+      - **От первой покупки** — удержание покупателей. Для транзакционных продуктов часто полезнее: «из тех, кто попробовал, кто вернулся».
+      - **По ключевому действию** — «retention заказов»: доля когорты, сделавшей заказ в период N. Строже, чем «открыл приложение».
+
+      ## Rolling (unbounded) retention
+
+      «Вернулся в день N **или позже**». Плюс — меньше шума, лучше для маленьких когорт. Минус — значение старых когорт растёт задним числом, когда кто-то возвращается через полгода.
+    tasks:
+      - type: sql
+        q: |
+          Построй **кривую удержания** для пользователей, зарегистрированных в **январе–марте 2024**: для N = 1, 3, 7, 14 и 30 — доля пользователей с любым событием ровно в день `signup_date + N`. Колонки: `n`, `retention`. Сортировка по `n`.
+        tables: [users, events]
+        starter: |
+          WITH act AS (
+            SELECT DISTINCT user_id, ts::DATE AS d FROM events
+          ),
+          days AS (
+            SELECT unnest([1, 3, 7, 14, 30]) AS n
+          ),
+          c AS (
+            SELECT user_id, signup_date FROM users WHERE signup_date < '2024-04-01'
+          )
+          SELECT
+        solution: |
+          WITH act AS (
+            SELECT DISTINCT user_id, ts::DATE AS d FROM events
+          ),
+          days AS (
+            SELECT unnest([1, 3, 7, 14, 30]) AS n
+          ),
+          c AS (
+            SELECT user_id, signup_date FROM users WHERE signup_date < '2024-04-01'
+          )
+          SELECT days.n,
+                 COUNT(a.user_id) * 1.0 / COUNT(*) AS retention
+          FROM c
+          CROSS JOIN days
+          LEFT JOIN act a ON a.user_id = c.user_id AND a.d = c.signup_date + days.n
+          GROUP BY days.n
+          ORDER BY days.n
+        ordered: true
+        explain: '`unnest([…])` создаёт маленькую таблицу дней, CROSS JOIN размножает когорту на каждый N, LEFT JOIN проверяет активность. Один запрос вместо пяти.'
+      - type: sql
+        q: |
+          Сравни **классический** и **rolling** retention 7-го дня для пользователей, зарегистрированных в **апреле 2024**. Classic — событие ровно в день 7; rolling — событие в день 7 или позже. Колонки: `users`, `classic_d7`, `rolling_d7`.
+        tables: [users, events]
+        starter: |
+          WITH act AS (
+            SELECT DISTINCT user_id, ts::DATE AS d FROM events
+          ),
+          c AS (
+            SELECT user_id, signup_date FROM users
+            WHERE signup_date >= '2024-04-01' AND signup_date < '2024-05-01'
+          )
+          SELECT
+        solution: |
+          WITH act AS (
+            SELECT DISTINCT user_id, ts::DATE AS d FROM events
+          ),
+          c AS (
+            SELECT user_id, signup_date FROM users
+            WHERE signup_date >= '2024-04-01' AND signup_date < '2024-05-01'
+          ),
+          f AS (
+            SELECT c.user_id,
+                   MAX(CASE WHEN a.d = c.signup_date + 7 THEN 1 ELSE 0 END) AS classic,
+                   MAX(CASE WHEN a.d >= c.signup_date + 7 THEN 1 ELSE 0 END) AS rolling
+            FROM c
+            LEFT JOIN act a ON a.user_id = c.user_id
+            GROUP BY c.user_id
+          )
+          SELECT COUNT(*) AS users, AVG(classic) AS classic_d7, AVG(rolling) AS rolling_d7
+          FROM f
+        explain: Rolling всегда выше — он засчитывает любое возвращение после дня 7. Важно в отчёте указывать, какое определение используется.
+      - type: single
+        q: Кривая удержания когорты упала до 15% к 30-му дню, а к 90-му поднялась до 19%. Как это интерпретировать?
+        options:
+          - Ошибка в данных — retention не может расти
+          - «Улыбка» — часть ушедших возвращается со временем; сильный сигнал ценности продукта или сезонного поведения
+          - Нужно перестать считать retention
+          - Это эффект новизны
+        answer: 1
+        explain: Классический retention дня N может расти, если люди возвращаются. Важно проверить, не связано ли это с маркетинговыми рассылками (тогда это купленное возвращение).
+
+  - id: metrics.funnel
+    theory: |
+      ## Парадокс Симпсона руками
+
+      ::widget simpson
+
+      ## Разложение изменения на «внутри» и «микс»
+
+      Пусть $w_i$ — доля сегмента i в трафике, $c_i$ — его конверсия. Изменение общей конверсии раскладывается точно:
+
+      $$\Delta C = \underbrace{\sum_i w_i^{(2)} (c_i^{(2)} - c_i^{(1)})}_{\text{внутри сегментов}} + \underbrace{\sum_i (w_i^{(2)} - w_i^{(1)})\, c_i^{(1)}}_{\text{микс}}$$
+
+      Это стандартный первый шаг при любом изменении средней метрики. «Конверсия упала на 1 пп, из них 0.8 пп — микс трафика (выросла доля web), 0.2 пп — внутри платформ» — совсем другой разговор с продуктом, чем просто «упала на 1 пп».
+
+      ## Воронка на данных
+
+      ::widget funnel
+    tasks:
+      - type: sql
+        q: |
+          Разложи изменение конверсии активных пользователей в покупку (пользователи с `purchase` / пользователи с любым событием за месяц) **с мая на июнь 2024** по платформам на эффект внутри платформ и эффект микса. Колонки: `total_change`, `within`, `mix`.
+        tables: [events, users]
+        starter: |
+          WITH m AS (
+            SELECT u.platform,
+                   strftime(e.ts, '%Y-%m') AS month,
+                   COUNT(DISTINCT e.user_id) AS users,
+                   COUNT(DISTINCT e.user_id) FILTER (WHERE e.event_name = 'purchase') AS buyers
+            FROM events e
+            JOIN users u USING (user_id)
+            WHERE e.ts >= '2024-05-01' AND e.ts < '2024-07-01'
+            GROUP BY 1, 2
+          ),
+          s AS (
+            SELECT platform, month, buyers * 1.0 / users AS c,
+                   users * 1.0 / SUM(users) OVER (PARTITION BY month) AS w
+            FROM m
+          )
+          SELECT
+        solution: |
+          WITH m AS (
+            SELECT u.platform,
+                   strftime(e.ts, '%Y-%m') AS month,
+                   COUNT(DISTINCT e.user_id) AS users,
+                   COUNT(DISTINCT e.user_id) FILTER (WHERE e.event_name = 'purchase') AS buyers
+            FROM events e
+            JOIN users u USING (user_id)
+            WHERE e.ts >= '2024-05-01' AND e.ts < '2024-07-01'
+            GROUP BY 1, 2
+          ),
+          s AS (
+            SELECT platform, month, buyers * 1.0 / users AS c,
+                   users * 1.0 / SUM(users) OVER (PARTITION BY month) AS w
+            FROM m
+          ),
+          p AS (
+            SELECT platform,
+                   MAX(c) FILTER (WHERE month = '2024-05') AS c1, MAX(c) FILTER (WHERE month = '2024-06') AS c2,
+                   MAX(w) FILTER (WHERE month = '2024-05') AS w1, MAX(w) FILTER (WHERE month = '2024-06') AS w2
+            FROM s
+            GROUP BY platform
+          )
+          SELECT SUM(w2 * c2) - SUM(w1 * c1) AS total_change,
+                 SUM(w2 * (c2 - c1)) AS within,
+                 SUM((w2 - w1) * c1) AS mix
+          FROM p
+        explain: Проверь — `within + mix` в точности равно `total_change`. Здесь доли платформ почти не менялись, поэтому изменение конверсии почти целиком «внутри». Если бы маркетинг привёл много web-трафика, эффект микса стал бы заметным.
+      - type: case
+        q: Конверсия в заказ за месяц упала с 31% до 29%. Продакт подозревает новую версию каталога.
+        steps:
+          - q: Что сделать в первую очередь?
+            options:
+              - Откатить каталог
+              - Разложить изменение на эффект внутри сегментов (платформа, канал, новые/старые) и эффект микса
+              - Запустить опрос пользователей
+            answer: 1
+            explain: Сначала понять, изменилось ли поведение или состав аудитории.
+          - q: 1.6 пп из 2 пп объясняются ростом доли новых пользователей из платной рекламы (их конверсия ниже). Что это значит для гипотезы про каталог?
+            options:
+              - Каталог точно виноват
+              - Основная причина — микс трафика; на каталог может приходиться максимум 0.4 пп, это стоит проверить внутри сегментов
+              - Нужно отключить рекламу
+            answer: 1
+            explain: Эффект микса не связан с продуктом. Внутрисегментное изменение — максимум, который можно приписать изменениям продукта (и то не всё).
+          - q: Что сказать маркетингу?
+            options:
+              - Ничего
+              - Новый платный трафик хуже конвертируется — стоит посмотреть экономику канала (CAC против LTV новых пользователей), а не только объём привлечения
+              - Попросить остановить все кампании
+            answer: 1
+            explain: Рост объёма ценой качества — нормальный компромисс, если экономика сходится. Это надо посчитать.
+        explain: Разложение «внутри / микс» отвечает на вопрос «кто виноват» раньше, чем начнутся споры.
+
+  - id: metrics.tree
+    theory: |
+      ## Дерево метрик в цифрах
+
+      ::widget metric-tree
+
+      ## Вклад множителей в изменение
+
+      Если $Y = X_1 \cdot X_2 \cdot \ldots \cdot X_k$, то изменения множителей перемножаются, и их нельзя просто сложить. Аккуратное разложение — через логарифмы:
+
+      $$\text{вклад}_i = \frac{\ln(X_i^{(2)} / X_i^{(1)})}{\ln(Y^{(2)} / Y^{(1)})} \cdot (Y^{(2)} - Y^{(1)})$$
+
+      Сумма вкладов в точности равна изменению Y. Этот приём закрывает вопрос «GMV упал на 8% — какая часть из-за покупателей, какая из-за чека».
+
+      ## Входные и выходные метрики
+
+      - **Выходные** (output) — то, что хочет бизнес: выручка, GMV, прибыль. Медленные и шумные, на них трудно влиять напрямую.
+      - **Входные** (input) — то, на что команда влияет прямо: скорость доставки, полнота ассортимента, доля успешных оплат. Быстрые и управляемые.
+
+      Хорошее дерево связывает входные метрики с выходными, и связь подтверждается данными или экспериментами.
+    tasks:
+      - type: sql
+        q: |
+          Разложи изменение **GMV** (доставленные заказы) **с июня на июль 2024** на вклады трёх множителей — число покупателей, заказов на покупателя, средний чек — логарифмическим методом. Колонки: `factor` (`'buyers'`, `'frequency'`, `'aov'`), `contribution` (в рублях).
+        tables: [orders]
+        starter: |
+          WITH m AS (
+            SELECT strftime(ts, '%Y-%m') AS month,
+                   SUM(revenue) AS gmv,
+                   COUNT(DISTINCT user_id) AS buyers,
+                   COUNT(*) * 1.0 / COUNT(DISTINCT user_id) AS frequency,
+                   SUM(revenue) / COUNT(*) AS aov
+            FROM orders
+            WHERE status = 'delivered' AND ts >= '2024-06-01' AND ts < '2024-08-01'
+            GROUP BY 1
+          )
+          SELECT
+        solution: |
+          WITH m AS (
+            SELECT strftime(ts, '%Y-%m') AS month,
+                   SUM(revenue) AS gmv,
+                   COUNT(DISTINCT user_id) AS buyers,
+                   COUNT(*) * 1.0 / COUNT(DISTINCT user_id) AS frequency,
+                   SUM(revenue) / COUNT(*) AS aov
+            FROM orders
+            WHERE status = 'delivered' AND ts >= '2024-06-01' AND ts < '2024-08-01'
+            GROUP BY 1
+          ),
+          p AS (
+            SELECT MAX(gmv) FILTER (WHERE month = '2024-06') AS g1, MAX(gmv) FILTER (WHERE month = '2024-07') AS g2,
+                   MAX(buyers) FILTER (WHERE month = '2024-06') AS b1, MAX(buyers) FILTER (WHERE month = '2024-07') AS b2,
+                   MAX(frequency) FILTER (WHERE month = '2024-06') AS f1, MAX(frequency) FILTER (WHERE month = '2024-07') AS f2,
+                   MAX(aov) FILTER (WHERE month = '2024-06') AS a1, MAX(aov) FILTER (WHERE month = '2024-07') AS a2
+            FROM m
+          )
+          SELECT 'buyers' AS factor, ln(b2 / b1) / ln(g2 / g1) * (g2 - g1) AS contribution FROM p
+          UNION ALL
+          SELECT 'frequency', ln(f2 / f1) / ln(g2 / g1) * (g2 - g1) FROM p
+          UNION ALL
+          SELECT 'aov', ln(a2 / a1) / ln(g2 / g1) * (g2 - g1) FROM p
+        explain: Почти всё падение GMV в июле — из-за числа покупателей (новые регистрации в данных закончились), частота и чек почти не изменились. Значит, искать причину нужно в привлечении, а не в продукте.
+      - type: single
+        q: Какая из метрик — **входная** для команды доставки?
+        options:
+          - Выручка компании
+          - Доля заказов, доставленных в обещанный слот
+          - Капитализация
+          - NPS всей компании
+        answer: 1
+        explain: |-
+          Команда напрямую влияет на скорость и точность доставки. Выручка — выходная метрика: на неё влияет всё сразу.
+      - type: order
+        q: Расставь уровни дерева метрик сверху вниз — от главной цели к рычагам команд.
+        items:
+          - North Star — еженедельно заказывающие клиенты
+          - Драйверы — новые покупатели, повторные покупатели
+          - Метрики шагов — конверсия в первый заказ, частота заказов
+          - Входные метрики команд — скорость доставки, полнота ассортимента, доля успешных оплат
+        explain: Каждый уровень раскладывает предыдущий. Внизу — то, что команда может изменить на этой неделе.

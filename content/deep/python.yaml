@@ -1,0 +1,202 @@
+nodes:
+
+  - id: py.pandas
+    theory: |
+      ## transform: значение группы в каждой строке
+
+      `groupby().agg()` схлопывает группу, а `groupby().transform()` возвращает результат **той же длины**, что и исходная таблица. Это аналог оконной функции:
+
+      ```python
+      orders['user_total'] = orders.groupby('user_id')['revenue'].transform('sum')
+      orders['share_of_user'] = orders['revenue'] / orders['user_total']
+      orders['order_n'] = orders.groupby('user_id').cumcount() + 1
+      ```
+
+      ## Анти-джойн в pandas
+
+      ```python
+      m = users.merge(orders[['user_id']].drop_duplicates(), on='user_id', how='left', indicator=True)
+      no_orders = m[m['_merge'] == 'left_only']
+      ```
+
+      Колонка `_merge` показывает, нашлась ли пара: `both`, `left_only`, `right_only`. Это ещё и отличный способ проверить, что merge соединил всё, что ожидалось.
+
+      ## Корзины: cut и qcut
+
+      - `pd.cut(x, bins=[0, 500, 1500, 3000, np.inf])` — по заданным границам (аналог CASE WHEN);
+      - `pd.qcut(x, 4, labels=[1, 2, 3, 4])` — по квантилям: каждая корзина с равным числом объектов.
+
+      ## Производительность
+
+      - Строковые колонки с повторяющимися значениями — в `category`: память в разы меньше, группировка быстрее.
+      - Векторные операции вместо `apply` и циклов.
+      - Читай только нужные колонки: `pd.read_csv(..., usecols=[...])`.
+      - Для данных больше памяти — DuckDB прямо из Python (`duckdb.sql("SELECT ... FROM df")`) или Polars.
+    tasks:
+      - type: python
+        q: |
+          Найди пользователей **без заказов** через `merge(..., indicator=True)` и посчитай их число по платформам. Результат — Series или DataFrame «платформа → число пользователей».
+        tables: [users, orders]
+        starter: |
+          m = users.merge(orders[['user_id']].drop_duplicates(), on='user_id', how='left', indicator=True)
+
+          result = ...
+        solution: |
+          m = users.merge(orders[['user_id']].drop_duplicates(), on='user_id', how='left', indicator=True)
+          result = m[m['_merge'] == 'left_only'].groupby('platform').size()
+        ordered: false
+        explain: '`drop_duplicates()` перед merge обязателен — иначе пользователь с несколькими заказами размножится (здесь это не испортило бы результат, но в других задачах испортит).'
+      - type: python
+        q: |
+          Насколько выручка сконцентрирована? Для покупателей посчитай сумму выручки **доставленных** заказов, раздели их на 4 квартиля через `pd.qcut(..., 4, labels=[1, 2, 3, 4])` и найди долю общей выручки, которую приносит каждый квартиль. Результат — Series «квартиль → доля» (сумма = 1).
+        tables: [orders]
+        starter: |
+          rev = orders[orders['status'] == 'delivered'].groupby('user_id')['revenue'].sum()
+
+          result = ...
+        solution: |
+          rev = orders[orders['status'] == 'delivered'].groupby('user_id')['revenue'].sum()
+          q = pd.qcut(rev, 4, labels=[1, 2, 3, 4])
+          result = rev.groupby(q, observed=True).sum() / rev.sum()
+        explain: Верхний квартиль покупателей приносит большую часть выручки. Именно поэтому удержание лучших клиентов стоит дороже привлечения новых, а эксперименты на выручку так шумят.
+      - type: python
+        bug: true
+        q: |
+          Код должен посчитать число **доставленных** заказов дороже 1 000 ₽, но падает с ошибкой. Исправь. Положи число в `result`.
+        tables: [orders]
+        starter: |
+          big = orders[orders['status'] == 'delivered' and orders['revenue'] > 1000]
+          result = len(big)
+        solution: |
+          big = orders[(orders['status'] == 'delivered') & (orders['revenue'] > 1000)]
+          result = len(big)
+        explain: Python-оператор `and` пытается привести Series к одному bool и падает с «truth value of a Series is ambiguous». Для поэлементных условий — `&`, `|`, `~` и обязательные скобки.
+
+  - id: py.cohorts
+    theory: |
+      ## Когортная LTV в pandas
+
+      Накопленная выручка на пользователя по месяцам жизни — та же кривая, что в уроке про LTV, но в pandas:
+
+      ```python
+      o = orders[orders.status == 'delivered'].merge(users[['user_id', 'channel', 'signup_date']], on='user_id')
+      o['month_n'] = (o['ts'] - o['signup_date']).dt.days // 30
+      rev = o.pivot_table(index='channel', columns='month_n', values='revenue', aggfunc='sum').fillna(0)
+      sizes = users.groupby('channel').size()
+      ltv = rev.cumsum(axis=1).div(sizes, axis=0)
+      ```
+
+      Главное — делить на **размер всей когорты**, а не на число покупателей, и использовать `cumsum(axis=1)` по месяцам.
+
+      ## Визуализация
+
+      ```python
+      import seaborn as sns
+      sns.heatmap(retention, annot=True, fmt='.0%', cmap='Greens')
+      ltv.T.plot(marker='o')   # кривые LTV по каналам
+      ```
+
+      В браузерном тренажёре графиков matplotlib нет, но в Jupyter это две строки.
+    tasks:
+      - type: python
+        q: |
+          Для пользователей, зарегистрированных в **январе–марте 2024**, построй накопленную выручку доставленных заказов на пользователя по каналам и месяцам жизни 0–3 (`month_n = (ts - signup_date).dt.days // 30`). Результат — DataFrame: индекс (или первая колонка) — канал, колонки — месяцы 0, 1, 2, 3.
+        tables: [users, orders]
+        starter: |
+          u = users[users['signup_date'] < '2024-04-01'][['user_id', 'channel', 'signup_date']]
+          o = orders[orders['status'] == 'delivered'].merge(u, on='user_id')
+          o['month_n'] = (o['ts'] - o['signup_date']).dt.days // 30
+
+          result = ...
+        solution: |
+          u = users[users['signup_date'] < '2024-04-01'][['user_id', 'channel', 'signup_date']]
+          o = orders[orders['status'] == 'delivered'].merge(u, on='user_id')
+          o['month_n'] = (o['ts'] - o['signup_date']).dt.days // 30
+          rev = o[o['month_n'] <= 3].pivot_table(index='channel', columns='month_n', values='revenue', aggfunc='sum').fillna(0)
+          sizes = u.groupby('channel').size()
+          result = rev.cumsum(axis=1).div(sizes, axis=0)
+        explain: Кривые referral и organic выше, чем ads, во все месяцы. Сравни их с CAC каналов — так и принимают решения о маркетинговом бюджете.
+      - type: single
+        q: Почему в когортной LTV делят на размер **всей** когорты, а не на число покупателей?
+        options:
+          - Так получается больше
+          - Решение о привлечении принимается на пользователя (CAC платится за каждого), и те, кто ничего не купил, — часть экономики канала
+          - Так требует pandas
+          - Покупателей нельзя посчитать
+        answer: 1
+        explain: Деление на покупателей даёт ARPPU-подобную метрику и завышает ценность канала с низкой конверсией.
+
+  - id: py.stats
+    theory: |
+      ## Бутстрап разницы между группами
+
+      ```python
+      rng = np.random.default_rng(1)
+      diffs = []
+      for _ in range(1000):
+          a_s = rng.choice(a, size=len(a), replace=True)
+          b_s = rng.choice(b, size=len(b), replace=True)
+          diffs.append(b_s.mean() - a_s.mean())
+      low, high = np.percentile(diffs, [2.5, 97.5])
+      ```
+
+      Каждую группу ресемплируют **отдельно** и сохраняют её размер.
+
+      ## Мощность в Python
+
+      ```python
+      from scipy.stats import norm
+      za, zb = norm.ppf(0.975), norm.ppf(0.8)
+      n = (za + zb) ** 2 * (p1 * (1 - p1) + p2 * (1 - p2)) / (p2 - p1) ** 2
+      ```
+
+      В statsmodels есть готовые классы: `NormalIndPower`, `TTestIndPower`, а для долей — `proportion_effectsize`.
+    tasks:
+      - type: python
+        q: |
+          Построй **бутстрап 95% интервал** для разницы ARPU (B − A) в **new_checkout**: выручка доставленных заказов на участника с `assigned_at` до 30 июня включительно (без заказов — 0). 1 000 итераций, `rng = np.random.default_rng(1)`, каждая группа ресемплируется отдельно. Положи в `result` кортеж `(low, high)`.
+        tables: [experiment_users, orders]
+        starter: |
+          eu = experiment_users[experiment_users['experiment'] == 'new_checkout']
+          d = orders[orders['status'] == 'delivered'].merge(eu[['user_id', 'assigned_at']], on='user_id')
+          d = d[(d['ts'] >= d['assigned_at']) & (d['ts'] < '2024-07-01')]
+          eu = eu.assign(rev=eu['user_id'].map(d.groupby('user_id')['revenue'].sum()).fillna(0))
+          a = eu.loc[eu['grp'] == 'A', 'rev'].to_numpy()
+          b = eu.loc[eu['grp'] == 'B', 'rev'].to_numpy()
+          rng = np.random.default_rng(1)
+
+          result = ...
+        solution: |
+          eu = experiment_users[experiment_users['experiment'] == 'new_checkout']
+          d = orders[orders['status'] == 'delivered'].merge(eu[['user_id', 'assigned_at']], on='user_id')
+          d = d[(d['ts'] >= d['assigned_at']) & (d['ts'] < '2024-07-01')]
+          eu = eu.assign(rev=eu['user_id'].map(d.groupby('user_id')['revenue'].sum()).fillna(0))
+          a = eu.loc[eu['grp'] == 'A', 'rev'].to_numpy()
+          b = eu.loc[eu['grp'] == 'B', 'rev'].to_numpy()
+          rng = np.random.default_rng(1)
+          diffs = [rng.choice(b, size=len(b)).mean() - rng.choice(a, size=len(a)).mean() for _ in range(1000)]
+          result = tuple(np.percentile(diffs, [2.5, 97.5]))
+        test: |
+          assert isinstance(result, (tuple, list, np.ndarray)) and len(result) == 2, 'result должен быть парой (low, high)'
+          lo, hi = float(result[0]), float(result[1])
+          e_lo, e_hi = float(expected[0]), float(expected[1])
+          w = e_hi - e_lo
+          assert lo < hi, 'Нижняя граница должна быть меньше верхней'
+          assert abs(lo - e_lo) < 0.15 * w and abs(hi - e_hi) < 0.15 * w, f'Интервал ({lo:.0f}, {hi:.0f}) заметно отличается от ожидаемого ≈ ({e_lo:.0f}, {e_hi:.0f})'
+        explain: Интервал целиком выше нуля — выручка на участника выросла. Он шире, чем можно ожидать, из-за тяжёлого хвоста выручки. Проверка допускает небольшое расхождение — бутстрап случаен и зависит от порядка вызовов генератора.
+      - type: python
+        q: |
+          Посчитай размер выборки на группу для теста конверсии: базовая конверсия 45%, хотим заметить рост до 47.25% (+5% относительных), α = 0.05 двусторонний, мощность 80%. Используй `scipy.stats.norm.ppf` и формулу для двух долей. Положи в `result` число, округлённое **вверх** до целого (`math.ceil`).
+        tables: []
+        packages: [scipy]
+        starter: |
+          from scipy.stats import norm
+          p1, p2 = 0.45, 0.4725
+
+          result = ...
+        solution: |
+          from scipy.stats import norm
+          p1, p2 = 0.45, 0.4725
+          za, zb = norm.ppf(0.975), norm.ppf(0.8)
+          result = math.ceil((za + zb) ** 2 * (p1 * (1 - p1) + p2 * (1 - p2)) / (p2 - p1) ** 2)
+        explain: Около 7 700 на группу. Конверсия new_checkout в «Корзинке» как раз около 45%, и в эксперименте было около 1 900 участников в группе — мощность для MDE 5% была низкой. Эффект оказался большим (около +17%), поэтому его всё же увидели.

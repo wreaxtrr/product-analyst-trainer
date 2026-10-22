@@ -1,0 +1,157 @@
+nodes:
+
+  - id: interview.sql
+    theory: |
+      ## Ещё пять задач-классик
+
+      1. **Второй по величине** в группе — `DENSE_RANK() = 2` (с RANK при равенстве первых второго может не быть).
+      2. **Медиана без функции median** — `ROW_NUMBER` и `COUNT` в окне, берём середину (или две средние).
+      3. **Пользователи, активные каждый месяц квартала** — `GROUP BY user_id HAVING COUNT(DISTINCT month) = 3`.
+      4. **Дубликаты** — `GROUP BY ключ HAVING COUNT(*) > 1`, а для удаления — `ROW_NUMBER() > 1`.
+      5. **Доля от итога и накопленная доля** (ABC-анализ) — `SUM(x) OVER (ORDER BY x DESC) / SUM(x) OVER ()`.
+
+      ## ABC-анализ
+
+      Товары сортируют по выручке и считают накопленную долю: **A** — первые товары, дающие 80% выручки, **B** — следующие 15%, **C** — оставшиеся 5%. Стандартный инструмент управления ассортиментом и частый вопрос на собеседованиях e-commerce.
+    tasks:
+      - type: sql
+        q: |
+          Для каждого города найди **второй по величине** заказ (выручка, любой статус). При равенстве выручки ранги одинаковые (`DENSE_RANK`). Если у второго ранга несколько заказов — выведи все. Колонки: `city`, `order_id`, `revenue`.
+        tables: [orders, users]
+        starter: |
+          WITH r AS (
+            SELECT u.city, o.order_id, o.revenue,
+                   DENSE_RANK() OVER (PARTITION BY u.city ORDER BY o.revenue DESC) AS rnk
+            FROM orders o
+            JOIN users u USING (user_id)
+          )
+          SELECT
+        solution: |
+          WITH r AS (
+            SELECT u.city, o.order_id, o.revenue,
+                   DENSE_RANK() OVER (PARTITION BY u.city ORDER BY o.revenue DESC) AS rnk
+            FROM orders o
+            JOIN users u USING (user_id)
+          )
+          SELECT city, order_id, revenue
+          FROM r
+          WHERE rnk = 2
+        explain: DENSE_RANK гарантирует, что второе место существует, даже если два заказа поделили первое.
+      - type: sql
+        q: |
+          Посчитай **медиану** выручки доставленных заказов **без** функций `median` и `quantile`: через `ROW_NUMBER` и общее число строк (при чётном числе строк — среднее двух центральных). Одна колонка `median_rev`.
+        tables: [orders]
+        starter: |
+          WITH r AS (
+            SELECT revenue,
+                   ROW_NUMBER() OVER (ORDER BY revenue) AS rn,
+                   COUNT(*) OVER () AS n
+            FROM orders
+            WHERE status = 'delivered'
+          )
+          SELECT
+        solution: |
+          WITH r AS (
+            SELECT revenue,
+                   ROW_NUMBER() OVER (ORDER BY revenue) AS rn,
+                   COUNT(*) OVER () AS n
+            FROM orders
+            WHERE status = 'delivered'
+          )
+          SELECT AVG(revenue) AS median_rev
+          FROM r
+          WHERE rn IN ((n + 1) // 2, (n + 2) // 2)
+        explain: При нечётном n оба выражения указывают на одну строку, при чётном — на две центральные. Так медиану считают в базах без функции percentile.
+      - type: sql
+        q: |
+          Сделай **ABC-анализ товаров** по числу добавлений в корзину: отсортируй товары по `add_to_cart` по убыванию, посчитай накопленную долю и присвой класс — `'A'`, если накопленная доля ≤ 0.8, `'B'` — ≤ 0.95, иначе `'C'`. Выведи число товаров в каждом классе. Колонки: `abc`, `items`.
+        tables: [events]
+        starter: |
+          WITH c AS (
+            SELECT item_id, COUNT(*) AS carts
+            FROM events
+            WHERE event_name = 'add_to_cart'
+            GROUP BY item_id
+          )
+          SELECT
+        solution: |
+          WITH c AS (
+            SELECT item_id, COUNT(*) AS carts
+            FROM events
+            WHERE event_name = 'add_to_cart'
+            GROUP BY item_id
+          ),
+          s AS (
+            SELECT item_id,
+                   SUM(carts) OVER (ORDER BY carts DESC, item_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) * 1.0
+                     / SUM(carts) OVER () AS cum_share
+            FROM c
+          )
+          SELECT CASE WHEN cum_share <= 0.8 THEN 'A' WHEN cum_share <= 0.95 THEN 'B' ELSE 'C' END AS abc,
+                 COUNT(*) AS items
+          FROM s
+          GROUP BY 1
+        explain: Рамка `ROWS` важна — с рамкой по умолчанию (RANGE) товары с одинаковым числом добавлений получили бы одинаковую накопленную долю. Класс A — меньшинство товаров, дающее 80% добавлений.
+      - type: sql
+        q: |
+          Сколько пользователей делали заказы (любой статус) **в каждом** из трёх месяцев — апреле, мае и июне 2024? Одна колонка `users`.
+        tables: [orders]
+        starter: |
+          SELECT COUNT(*) AS users
+          FROM (
+            SELECT user_id
+            FROM orders
+          )
+        solution: |
+          SELECT COUNT(*) AS users
+          FROM (
+            SELECT user_id
+            FROM orders
+            WHERE ts >= '2024-04-01' AND ts < '2024-07-01'
+            GROUP BY user_id
+            HAVING COUNT(DISTINCT date_trunc('month', ts)) = 3
+          )
+        explain: '`COUNT(DISTINCT месяц) = 3` после фильтра по кварталу — компактный способ проверить «в каждом периоде».'
+
+  - id: interview.stats
+    theory: |
+      ## Ещё вопросы блица
+
+      | Вопрос | Короткий ответ |
+      |---|---|
+      | Чем ДИ отличается от предсказательного интервала? | ДИ — для параметра (среднего), предсказательный — для нового наблюдения, он шире |
+      | Почему 5%? | Договорённость. Порог выбирают из стоимости ошибок |
+      | Что такое MDE? | Минимальный эффект, который тест обнаружит с заданной мощностью |
+      | Зачем A/A-тест? | Проверить систему экспериментов: сплит, метрики, долю ложных побед |
+      | Что такое winner's curse? | Значимые эффекты в среднем завышены, особенно при низкой мощности |
+      | Когда нужен Уэлч? | Почти всегда — он не требует равных дисперсий |
+      | Корреляция 0 — значит, связи нет? | Нет, только линейной связи |
+      | Что такое регрессия к среднему? | Экстремальные значения при повторном измерении ближе к среднему |
+    tasks:
+      - type: single
+        q: Корреляция Пирсона между двумя метриками близка к нулю. Можно ли сказать, что они не связаны?
+        options:
+          - Да, связи нет
+          - Нет — корреляция ловит только линейную связь; зависимость может быть нелинейной (например, U-образной)
+          - Да, если выборка большая
+          - Корреляция всегда равна нулю для бизнес-метрик
+        answer: 1
+        explain: y = x² на симметричном интервале даёт нулевую корреляцию при идеальной зависимости. Смотри на график, а не только на коэффициент.
+      - type: single
+        q: Эксперимент с низкой мощностью (30%) показал значимый эффект +12%. Что можно сказать про размер эффекта?
+        options:
+          - Он, скорее всего, точный
+          - Он, скорее всего, завышен — при низкой мощности значимыми оказываются в основном случаи, где шум сложился в пользу эффекта (winner's curse)
+          - Он, скорее всего, занижен
+          - Мощность не влияет на оценку
+        answer: 1
+        explain: Отбор по значимости при низкой мощности систематически завышает оценки. Хорошая практика — перепроверка или сжатие оценки к прайору.
+      - type: single
+        q: Чем 95% доверительный интервал для среднего чека отличается от 95% предсказательного интервала для чека следующего заказа?
+        options:
+          - Ничем
+          - ДИ описывает неопределённость среднего и сужается с ростом n; предсказательный описывает разброс отдельного заказа и почти не сужается
+          - Предсказательный всегда уже
+          - ДИ нужен только для долей
+        answer: 1
+        explain: На миллионе заказов ДИ среднего — пара рублей, а отдельный заказ по-прежнему может быть от 300 до 5 000 ₽.

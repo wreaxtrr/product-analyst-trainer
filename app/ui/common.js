@@ -76,6 +76,7 @@ export function Header({ route, dueCount, xp }) {
         <a class="lvl" href="#/progress" title=${`${into} из ${XP_PER_LEVEL} опыта до следующего уровня`}>
           <${MiniRing} value=${into} max=${XP_PER_LEVEL} /><span>LVL <span class="lvl-num">${lvl}</span></span>
         </a>
+        <button class="icon-btn" onClick=${() => dispatchEvent(new CustomEvent('open-palette'))} title="Поиск (Ctrl+K)" aria-label="Поиск">⌕</button>
         <button class="icon-btn" onClick=${cycleTheme} title=${`Тема: ${theme === 'system' ? 'как в системе' : theme}`} aria-label="Переключить тему">◐</button>
       </div>
     </header>

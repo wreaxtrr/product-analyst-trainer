@@ -60,10 +60,14 @@ def _exec(src, ns):
 
 def _norm(x):
     if isinstance(x, pd.Series):
-        x = x.to_frame()
+        x = x.to_frame(name=x.name if x.name is not None else 'value')
     if isinstance(x, pd.DataFrame):
         if isinstance(x.index, pd.RangeIndex):
             return x.reset_index(drop=True)
+        x = x.copy()
+        # имя индекса может совпадать с именем колонки — тогда reset_index упадёт
+        names = [n if (n is not None and n not in x.columns) else f'index_{i}' for i, n in enumerate(x.index.names)]
+        x.index = x.index.set_names(names)
         return x.reset_index()
     if isinstance(x, (list, tuple, np.ndarray)):
         return pd.DataFrame({'value': np.asarray(x).ravel()})

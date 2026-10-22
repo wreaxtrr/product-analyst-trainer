@@ -6,6 +6,7 @@ import { Header, Toast, Stars } from './ui/common.js';
 import { MapPage } from './ui/map.js';
 import { NodePage } from './ui/node.js';
 import { PracticePage } from './ui/practice.js';
+import { CommandPalette } from './ui/palette.js';
 import { ProgressPage, SettingsPage, MetricsPage, SandboxPage, SelfTestPage, dueKeys } from './ui/pages.js';
 
 // Конфетти при прохождении узла — короткая анимация на canvas.
@@ -78,7 +79,7 @@ function App() {
   else if (p0 === 'sandbox') page = html`<${SandboxPage} />`;
   else if (p0 === 'selftest') page = html`<${SelfTestPage} />`;
   else page = html`<main class="page"><h1>Страница не найдена</h1><a href="#/">На карту</a></main>`;
-  return html`<${Header} route=${route} dueCount=${dueKeys(s).length} xp=${s.xp} />${page}<${Toast} text=${toastText} /><${Celebrate} info=${cele} onClose=${() => setCele(null)} />`;
+  return html`<${Header} route=${route} dueCount=${dueKeys(s).length} xp=${s.xp} />${page}<${Toast} text=${toastText} /><${Celebrate} info=${cele} onClose=${() => setCele(null)} /><${CommandPalette} />`;
 }
 
 loadCourse()

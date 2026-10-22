@@ -1,0 +1,554 @@
+nodes:
+
+  - id: sql.select
+    theory: |
+      ## Приоритет AND и OR
+
+      `AND` связывает сильнее, чем `OR`. Условие
+
+      ```sql
+      WHERE o.status = 'delivered' AND u.city = 'Москва' OR u.city = 'Казань'
+      ```
+
+      читается как `(delivered AND Москва) OR Казань` — то есть все казанские заказы, включая отменённые. Правило: **если в условии есть OR — ставь скобки**, даже когда уверен в приоритете. А ещё лучше — `u.city IN ('Москва', 'Казань')`.
+
+      ## Часовые пояса
+
+      Логи почти всегда пишутся в **UTC**. Заказ в `2024-03-07 22:30:00 UTC` по Москве (UTC+3) сделан 8 марта в 01:30. Для отчёта «заказы по дням» в продукте, который живёт по московскому времени, это важно: иначе вечерние заказы попадут в предыдущий день, а праздничный пик «размажется».
+
+      ```sql
+      -- DuckDB
+      SELECT (ts + INTERVAL 3 HOUR)::DATE AS msk_date ...
+      -- ClickHouse
+      SELECT toDate(ts, 'Europe/Moscow') ...
+      ```
+
+      В «Корзинке» для простоты всё время уже местное.
+
+      ## Читаемый SQL
+
+      - Каждое ключевое слово — с новой строки, условия — с отступом.
+      - Осмысленные алиасы (`o` для orders, `u` для users), а не `a`, `b`, `c`.
+      - Явный список колонок вместо `SELECT *` в финальных запросах.
+      - Сложное — в CTE с говорящими именами.
+
+      На собеседовании читаемость оценивают почти так же, как правильность.
+    tasks:
+      - type: order
+        q: Расставь части SELECT-запроса в порядке **записи**.
+        items:
+          - SELECT
+          - FROM
+          - JOIN … ON
+          - WHERE
+          - GROUP BY
+          - HAVING
+          - ORDER BY
+          - LIMIT
+        explain: Порядок записи отличается от порядка выполнения (FROM → WHERE → GROUP BY → HAVING → SELECT → ORDER BY → LIMIT). Полезно знать оба.
+      - type: sql
+        bug: true
+        q: |
+          Аналитик хочет число **доставленных** заказов пользователей из **Москвы или Казани**, но цифра получается больше ожидаемой. Исправь запрос. Колонка: `orders`.
+        tables: [orders, users]
+        starter: |
+          SELECT COUNT(*) AS orders
+          FROM orders o
+          JOIN users u USING (user_id)
+          WHERE o.status = 'delivered' AND u.city = 'Москва' OR u.city = 'Казань'
+        solution: |
+          SELECT COUNT(*) AS orders
+          FROM orders o
+          JOIN users u USING (user_id)
+          WHERE o.status = 'delivered' AND u.city IN ('Москва', 'Казань')
+        explain: Без скобок условие означало «доставленные из Москвы ИЛИ любые из Казани» — отменённые казанские заказы тоже попадали в счёт.
+      - type: single
+        q: Логи хранятся в UTC, продукт работает по Москве (UTC+3). Заказ записан как `2024-03-07 22:30:00`. К какому дню его отнести в ежедневном отчёте?
+        options:
+          - 7 марта
+          - 8 марта
+          - 6 марта
+          - Зависит от платформы
+        answer: 1
+        explain: 22:30 UTC + 3 часа = 01:30 8 марта по Москве. Ошибка часового пояса — классическая причина расхождений между отчётами.
+
+  - id: sql.agg
+    theory: |
+      ## Среднее средних
+
+      «Средний чек» можно посчитать двумя способами, и это **разные метрики**:
+
+      - по всем заказам — `SUM(revenue) / COUNT(*)`: крупные покупатели с множеством заказов весят больше;
+      - среднее из средних чеков пользователей — каждый пользователь весит одинаково.
+
+      То же с «средней конверсией по дням»: среднее дневных конверсий ≠ общая конверсия за период, если трафик по дням разный. Правило: если не оговорено иное, **агрегируй числитель и знаменатель отдельно и дели в конце**.
+
+      ## ARPU с нулями
+
+      ```sql
+      -- Неверно: среднее только по покупателям (ARPPU, а не ARPU)
+      SELECT AVG(revenue) FROM orders;
+      -- Верно: выручка / все пользователи, включая тех, у кого заказов нет
+      SELECT SUM(COALESCE(r.rev, 0)) / COUNT(*) FROM users u LEFT JOIN rev r USING (user_id);
+      ```
+
+      ## Деление на ноль
+
+      В PostgreSQL `x / 0` — ошибка, в DuckDB и ClickHouse — NULL или бесконечность. Переносимая защита — `x / NULLIF(y, 0)`: при нулевом знаменателе результат будет NULL.
+
+      ## COUNT DISTINCT по нескольким колонкам
+
+      `COUNT(DISTINCT (user_id, ts::DATE))` — число уникальных пар «пользователь × день», то есть сумма DAU за период. В PostgreSQL то же самое пишется как `COUNT(DISTINCT user_id::text || ts::date::text)` или через подзапрос с DISTINCT.
+    tasks:
+      - type: sql
+        q: |
+          Посчитай средний чек **доставленных** заказов двумя способами. `aov_orders` — по всем заказам, `aov_users` — среднее из средних чеков покупателей. Колонки: `aov_orders`, `aov_users`.
+        tables: [orders]
+        starter: |
+          WITH per_user AS (
+            SELECT user_id, AVG(revenue) AS user_aov
+            FROM orders
+            WHERE status = 'delivered'
+            GROUP BY user_id
+          )
+          SELECT
+        solution: |
+          WITH per_user AS (
+            SELECT user_id, AVG(revenue) AS user_aov
+            FROM orders
+            WHERE status = 'delivered'
+            GROUP BY user_id
+          )
+          SELECT (SELECT AVG(revenue) FROM orders WHERE status = 'delivered') AS aov_orders,
+                 AVG(user_aov) AS aov_users
+          FROM per_user
+        explain: Цифры отличаются, потому что у пользователей с большим числом заказов другой средний чек. Какая из них нужна — продуктовый вопрос. В отчёте метрику надо определить явно.
+      - type: sql
+        bug: true
+        q: |
+          Нужна **ARPU** — выручка доставленных заказов на одного **зарегистрированного** пользователя по каналам. Запрос коллеги завышает её в несколько раз. Исправь. Колонки: `channel`, `arpu`.
+        tables: [orders, users]
+        starter: |
+          SELECT u.channel, AVG(o.revenue) AS arpu
+          FROM orders o
+          JOIN users u USING (user_id)
+          WHERE o.status = 'delivered'
+          GROUP BY u.channel
+        solution: |
+          WITH rev AS (
+            SELECT user_id, SUM(revenue) AS rev
+            FROM orders
+            WHERE status = 'delivered'
+            GROUP BY user_id
+          )
+          SELECT u.channel, SUM(COALESCE(r.rev, 0)) / COUNT(*) AS arpu
+          FROM users u
+          LEFT JOIN rev r USING (user_id)
+          GROUP BY u.channel
+        explain: Исходный запрос считал средний чек заказа, а не выручку на пользователя. Нужно сначала сложить выручку по пользователю, потом поделить на всех пользователей канала, включая тех, кто ничего не купил.
+      - type: single
+        q: Дневная конверсия в понедельник — 10% (1 000 посетителей), во вторник — 20% (100 посетителей). Какая конверсия за два дня?
+        options:
+          - 15% — среднее двух дней
+          - Около 10.9% — 120 покупок на 1 100 посетителей
+          - 30%
+          - Нельзя посчитать
+        answer: 1
+        explain: Среднее дневных конверсий даёт вторнику с 100 посетителями такой же вес, как понедельнику с 1 000. Правильно — суммировать числитель и знаменатель.
+
+  - id: sql.joins
+    theory: |
+      ## Соединение по интервалу
+
+      Часто нужно соединить событие с тем состоянием, которое было **на момент события**: группа эксперимента на дату заказа, цена товара на дату покупки, тариф на дату звонка.
+
+      ```sql
+      SELECT o.order_id, e.grp
+      FROM orders o
+      LEFT JOIN experiment_users e
+        ON e.user_id = o.user_id
+       AND e.experiment = 'new_checkout'
+       AND e.assigned_at <= o.ts::DATE
+      ```
+
+      Для таблиц с версиями (SCD 2) условие такое: `o.ts >= v.valid_from AND o.ts < v.valid_to`.
+
+      В DuckDB и ClickHouse есть **ASOF JOIN** — «ближайшая предыдущая запись»: курс валюты на момент платежа, последнее событие перед покупкой.
+
+      ```sql
+      SELECT p.*, r.rate
+      FROM payments p
+      ASOF JOIN rates r ON p.currency = r.currency AND p.ts >= r.ts
+      ```
+
+      ## Самосоединение
+
+      Таблицу соединяют саму с собой, чтобы сравнить строки между собой: пары пользователей из одного реферального приглашения, «повторный заказ в течение 7 дней после первого», товары, купленные вместе (`order_items a JOIN order_items b ON a.order_id = b.order_id AND a.item_id < b.item_id`).
+
+      ## CROSS JOIN для календаря
+
+      Когда отчёт должен содержать **все** комбинации (каждый день × каждая платформа), даже без данных, строят «скелет» через CROSS JOIN календаря со справочником и LEFT JOIN-ят к нему факты. Иначе дни без заказов просто пропадут из графика.
+    tasks:
+      - type: sql
+        q: |
+          Для **доставленных** заказов июня определи группу эксперимента **new_checkout**, в которой был пользователь на момент заказа (назначение с `assigned_at <= ts::DATE`). Заказы пользователей вне эксперимента (или до назначения) — с `grp` = NULL. Колонки: `grp`, `orders`.
+        tables: [orders, experiment_users]
+        starter: |
+          SELECT e.grp, COUNT(*) AS orders
+          FROM orders o
+          LEFT JOIN experiment_users e
+            ON e.user_id = o.user_id
+          WHERE o.status = 'delivered' AND o.ts >= '2024-06-01' AND o.ts < '2024-07-01'
+          GROUP BY e.grp
+        solution: |
+          SELECT e.grp, COUNT(*) AS orders
+          FROM orders o
+          LEFT JOIN experiment_users e
+            ON e.user_id = o.user_id
+           AND e.experiment = 'new_checkout'
+           AND e.assigned_at <= o.ts::DATE
+          WHERE o.status = 'delivered' AND o.ts >= '2024-06-01' AND o.ts < '2024-07-01'
+          GROUP BY e.grp
+        explain: Без условия на эксперимент заказ «размножился» бы на два эксперимента. Без условия на дату заказы до назначения ошибочно попали бы в группу.
+      - type: sql
+        bug: true
+        q: |
+          Нужна выручка доставленных заказов по платформам — только для пользователей, которые хотя бы раз открывали приложение (`app_open`). Запрос выдаёт огромные числа. Исправь. Колонки: `platform`, `revenue`.
+        tables: [orders, users, events]
+        starter: |
+          SELECT u.platform, SUM(o.revenue) AS revenue
+          FROM users u
+          JOIN orders o ON o.user_id = u.user_id
+          JOIN events e ON e.user_id = u.user_id
+          WHERE o.status = 'delivered' AND e.event_name = 'app_open'
+          GROUP BY u.platform
+        solution: |
+          SELECT u.platform, SUM(o.revenue) AS revenue
+          FROM users u
+          JOIN orders o ON o.user_id = u.user_id
+          WHERE o.status = 'delivered'
+            AND EXISTS (SELECT 1 FROM events e WHERE e.user_id = u.user_id AND e.event_name = 'app_open')
+          GROUP BY u.platform
+        explain: Каждый заказ размножался на число открытий приложения пользователем. Условие «хотя бы раз» — это EXISTS (семи-джойн), а не JOIN.
+      - type: single
+        q: Нужен график заказов по дням и платформам за месяц, где **каждая** платформа показана **каждый** день, даже если заказов не было. Как построить?
+        options:
+          - GROUP BY по заказам — пропусков не будет
+          - Скелет «календарь × платформы» через CROSS JOIN, к нему LEFT JOIN агрегированных заказов и COALESCE(…, 0)
+          - INNER JOIN календаря с заказами
+          - Это невозможно в SQL
+        answer: 1
+        explain: GROUP BY по фактам выдаёт только те комбинации, для которых есть строки. Скелет гарантирует полный набор дней и платформ.
+
+  - id: sql.windows
+    theory: |
+      ## Gaps and islands: серии подряд
+
+      «Сколько дней подряд пользователь был активен?» — классика. Приём: у подряд идущих дат разность «дата − номер строки» постоянна.
+
+      ```sql
+      WITH d AS (SELECT DISTINCT user_id, ts::DATE AS dt FROM events),
+      g AS (
+        SELECT user_id, dt,
+               dt - CAST(ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY dt) AS INTEGER) AS island
+        FROM d
+      )
+      SELECT user_id, island, COUNT(*) AS streak, MIN(dt) AS start_dt
+      FROM g GROUP BY 1, 2
+      ```
+
+      ## LEAD: время до следующего события
+
+      `LEAD(ts) OVER (PARTITION BY user_id ORDER BY ts)` — время следующего события. Разность — время до повторной покупки, длительность сессии, время реакции на пуш.
+
+      ## ROWS против RANGE
+
+      - `ROWS BETWEEN 6 PRECEDING AND CURRENT ROW` — ровно 7 **строк**. Если в данных пропущен день, окно растянется на 8 дней.
+      - `RANGE BETWEEN INTERVAL 6 DAY PRECEDING AND CURRENT ROW` — 7 **дней** по значению даты, сколько бы строк там ни было.
+
+      Для скользящих метрик по дням безопаснее `RANGE` с интервалом или заранее дополненный календарь.
+
+      ## Ранги и распределения
+
+      - `NTILE(n)` — делит на n равных групп (квантили, децили).
+      - `PERCENT_RANK()`, `CUME_DIST()` — положение строки в распределении от 0 до 1.
+      - `FIRST_VALUE`, `LAST_VALUE`, `NTH_VALUE` — значения из начала и конца окна. Осторожно: у `LAST_VALUE` с рамкой по умолчанию «последнее» — это текущая строка.
+    tasks:
+      - type: sql
+        q: |
+          Найди **самую длинную серию** календарных дней подряд с любым событием среди всех пользователей и **сколько пользователей** имеют серию 7 дней и больше. Колонки: `max_streak`, `users_7plus`.
+        tables: [events]
+        starter: |
+          WITH d AS (
+            SELECT DISTINCT user_id, ts::DATE AS dt FROM events
+          ),
+          g AS (
+            SELECT user_id, dt,
+                   dt - CAST(ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY dt) AS INTEGER) AS island
+            FROM d
+          )
+          SELECT
+        solution: |
+          WITH d AS (
+            SELECT DISTINCT user_id, ts::DATE AS dt FROM events
+          ),
+          g AS (
+            SELECT user_id, dt,
+                   dt - CAST(ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY dt) AS INTEGER) AS island
+            FROM d
+          ),
+          s AS (
+            SELECT user_id, island, COUNT(*) AS streak FROM g GROUP BY 1, 2
+          )
+          SELECT MAX(streak) AS max_streak,
+                 COUNT(DISTINCT user_id) FILTER (WHERE streak >= 7) AS users_7plus
+          FROM s
+        explain: Серии строятся на уникальных днях. Если взять события без DISTINCT, номер строки будет расти внутри дня, и острова «рассыплются».
+      - type: sql
+        q: |
+          Посчитай **медианное время в часах** между соседними заказами одного пользователя (любой статус) по платформам. Время — `date_diff('minute', ts, next_ts) / 60.0`, где `next_ts` — время следующего заказа (`LEAD`). Пары без следующего заказа не учитывай. Колонки: `platform`, `median_hours`.
+        tables: [orders, users]
+        starter: |
+          WITH o AS (
+            SELECT o.user_id, u.platform, o.ts,
+                   LEAD(o.ts) OVER (PARTITION BY o.user_id ORDER BY o.ts, o.order_id) AS next_ts
+            FROM orders o
+            JOIN users u USING (user_id)
+          )
+          SELECT
+        solution: |
+          WITH o AS (
+            SELECT o.user_id, u.platform, o.ts,
+                   LEAD(o.ts) OVER (PARTITION BY o.user_id ORDER BY o.ts, o.order_id) AS next_ts
+            FROM orders o
+            JOIN users u USING (user_id)
+          )
+          SELECT platform, median(date_diff('minute', ts, next_ts) / 60.0) AS median_hours
+          FROM o
+          WHERE next_ts IS NOT NULL
+          GROUP BY platform
+        explain: Медиана — потому что распределение времени до следующей покупки сильно скошено. Такая метрика помогает выбрать окно для определения оттока и момент для напоминания.
+      - type: single
+        q: В таблице дневной выручки пропущены дни без заказов. Нужно скользящее среднее за 7 **календарных** дней. Какая рамка окна корректна?
+        options:
+          - "`ROWS BETWEEN 6 PRECEDING AND CURRENT ROW`"
+          - "`RANGE BETWEEN INTERVAL 6 DAY PRECEDING AND CURRENT ROW` (или заранее дополнить календарь нулями)"
+          - "`ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`"
+          - Рамка не важна
+        answer: 1
+        explain: ROWS считает строки — при пропущенных днях окно захватит больше 7 дней. RANGE с интервалом считает по значению даты.
+
+  - id: sql.dates
+    theory: |
+      ## Календарь и нулевые дни
+
+      Если в какой-то день заказов не было, `GROUP BY ts::DATE` этот день просто не вернёт. На графике линия «перепрыгнет» через провал, а скользящие средние посчитаются неправильно. Решение — календарь:
+
+      ```sql
+      WITH cal AS (
+        SELECT CAST(generate_series AS DATE) AS dt
+        FROM generate_series(DATE '2024-01-01', DATE '2024-01-31', INTERVAL 1 DAY)
+      ),
+      o AS (SELECT ts::DATE AS dt, COUNT(*) AS n FROM orders GROUP BY 1)
+      SELECT cal.dt, COALESCE(o.n, 0) AS orders
+      FROM cal LEFT JOIN o USING (dt)
+      ```
+
+      ## Неделя к неделе
+
+      Из-за недельной сезонности день сравнивают с **тем же днём неделю назад**:
+
+      ```sql
+      SELECT dt, orders,
+             LAG(orders, 7) OVER (ORDER BY dt) AS week_ago,
+             orders * 1.0 / LAG(orders, 7) OVER (ORDER BY dt) - 1 AS wow
+      FROM daily
+      ```
+
+      `LAG(x, 7)` корректен, только если в ряду нет пропущенных дней — ещё одна причина строить календарь.
+
+      ## Начало и конец периода
+
+      - Начало месяца — `date_trunc('month', d)`, конец месяца — `last_day(d)`.
+      - Число дней между датами — `date_diff('day', a, b)`; месяцев — `date_diff('month', a, b)` (считает границы месяцев, а не полные 30 дней!).
+      - Сдвиг на месяц — `d + INTERVAL 1 MONTH` (31 января + 1 месяц = 29 февраля 2024).
+    tasks:
+      - type: sql
+        q: |
+          Покажи число **доставленных** заказов пользователей **web** по **каждому дню января 2024**, включая дни без заказов (с нулём). Колонки: `dt`, `orders`. Сортировка по дате.
+        tables: [orders, users]
+        starter: |
+          WITH cal AS (
+            SELECT CAST(generate_series AS DATE) AS dt
+            FROM generate_series(DATE '2024-01-01', DATE '2024-01-31', INTERVAL 1 DAY)
+          )
+          SELECT
+        solution: |
+          WITH cal AS (
+            SELECT CAST(generate_series AS DATE) AS dt
+            FROM generate_series(DATE '2024-01-01', DATE '2024-01-31', INTERVAL 1 DAY)
+          ),
+          o AS (
+            SELECT o.ts::DATE AS dt, COUNT(*) AS n
+            FROM orders o
+            JOIN users u USING (user_id)
+            WHERE u.platform = 'web' AND o.status = 'delivered'
+            GROUP BY 1
+          )
+          SELECT cal.dt, COALESCE(o.n, 0) AS orders
+          FROM cal
+          LEFT JOIN o USING (dt)
+          ORDER BY cal.dt
+        ordered: true
+        explain: В январе продукт только запустился, и у web много дней без заказов. Без календаря в отчёте было бы меньше 31 строки — и это легко не заметить.
+      - type: sql
+        q: |
+          Сравни число **доставленных** заказов с тем же днём неделю назад для дней с 10 по 16 июня 2024. Колонки: `dt`, `orders`, `week_ago`, `wow` (orders / week_ago − 1). Сортировка по дате.
+        tables: [orders]
+        starter: |
+          WITH daily AS (
+            SELECT ts::DATE AS dt, COUNT(*) AS orders
+            FROM orders
+            WHERE status = 'delivered' AND ts >= '2024-06-03' AND ts < '2024-06-17'
+            GROUP BY 1
+          )
+          SELECT
+        solution: |
+          WITH daily AS (
+            SELECT ts::DATE AS dt, COUNT(*) AS orders
+            FROM orders
+            WHERE status = 'delivered' AND ts >= '2024-06-03' AND ts < '2024-06-17'
+            GROUP BY 1
+          ),
+          w AS (
+            SELECT dt, orders, LAG(orders, 7) OVER (ORDER BY dt) AS week_ago
+            FROM daily
+          )
+          SELECT dt, orders, week_ago, orders * 1.0 / week_ago - 1 AS wow
+          FROM w
+          WHERE dt >= '2024-06-10'
+          ORDER BY dt
+        ordered: true
+        explain: Данные берутся с 3 июня — чтобы у 10 июня был «неделю назад». Фильтр по итоговому периоду — после окна, иначе LAG не увидит прошлую неделю.
+      - type: number
+        q: Сколько вернёт `date_diff('month', DATE '2024-01-31', DATE '2024-02-01')` в DuckDB (число пересечённых границ месяцев)?
+        answer: 1
+        atol: 0
+        explain: Функция считает границы периодов, а не полные месяцы. Между 31 января и 1 февраля — один день, но одна граница месяца. Для «возраста в месяцах» это частая ловушка.
+
+  - id: sql.funnels
+    theory: |
+      ## Строгая воронка с порядком шагов
+
+      Воронка «по пользователям за период» не проверяет порядок. Строгая версия требует, чтобы каждый шаг случился **после** предыдущего:
+
+      ```sql
+      WITH f AS (
+        SELECT user_id,
+               MIN(ts) FILTER (WHERE event_name = 'view_item')   AS t_view,
+               MIN(ts) FILTER (WHERE event_name = 'add_to_cart') AS t_cart,
+               MIN(ts) FILTER (WHERE event_name = 'purchase')    AS t_buy
+        FROM events GROUP BY user_id
+      )
+      SELECT COUNT(t_view) AS viewed,
+             COUNT(*) FILTER (WHERE t_cart > t_view) AS carted,
+             COUNT(*) FILTER (WHERE t_buy > t_cart AND t_cart > t_view) AS bought
+      FROM f
+      ```
+
+      Это упрощение: берём первые моменты каждого шага. Для точного варианта «шаги по порядку внутри окна» в ClickHouse есть `windowFunnel`, в DuckDB — оконные функции или `ASOF JOIN`.
+
+      ::widget funnel
+
+      ## Время до конверсии
+
+      Помимо доли дошедших, важно, **как быстро** доходят. Медиана времени от корзины до оплаты выросла с 3 до 8 минут — значит, на шаге оплаты появилось трение, даже если итоговая конверсия пока не упала.
+
+      ## Сегменты воронки
+
+      Всегда смотри воронку в разрезе: платформа, новый или старый пользователь, источник трафика, город. В «Корзинке» общий провал 14 мая виден только в разрезе Android.
+    tasks:
+      - type: sql
+        q: |
+          Построй **строгую воронку за июнь 2024** по первым моментам шагов: сколько пользователей посмотрели товар, сколько добавили в корзину **после** первого просмотра, сколько купили **после** первого добавления в корзину. Учитывай только события июня. Колонки: `viewed`, `carted`, `bought`.
+        tables: [events]
+        starter: |
+          WITH f AS (
+            SELECT user_id,
+                   MIN(ts) FILTER (WHERE event_name = 'view_item') AS t_view,
+                   MIN(ts) FILTER (WHERE event_name = 'add_to_cart') AS t_cart,
+                   MIN(ts) FILTER (WHERE event_name = 'purchase') AS t_buy
+            FROM events
+            WHERE ts >= '2024-06-01' AND ts < '2024-07-01'
+            GROUP BY user_id
+          )
+          SELECT
+          FROM f
+        solution: |
+          WITH f AS (
+            SELECT user_id,
+                   MIN(ts) FILTER (WHERE event_name = 'view_item') AS t_view,
+                   MIN(ts) FILTER (WHERE event_name = 'add_to_cart') AS t_cart,
+                   MIN(ts) FILTER (WHERE event_name = 'purchase') AS t_buy
+            FROM events
+            WHERE ts >= '2024-06-01' AND ts < '2024-07-01'
+            GROUP BY user_id
+          )
+          SELECT COUNT(t_view) AS viewed,
+                 COUNT(*) FILTER (WHERE t_cart > t_view) AS carted,
+                 COUNT(*) FILTER (WHERE t_buy > t_cart AND t_cart > t_view) AS bought
+          FROM f
+        explain: Сравни с нестрогой воронкой из основной части урока — цифры чуть ниже, потому что отсекаются пользователи с «перепутанным» порядком (например, купившие по старой корзине из прошлого месяца).
+      - type: sql
+        q: |
+          Посчитай **медианное время в минутах** от первого `checkout` до первого `purchase` в тот же день у одного пользователя (только дни, где purchase был после checkout) по платформам за весь период. Используй `date_diff('second', t_checkout, t_purchase) / 60.0`. Колонки: `platform`, `median_minutes`.
+        tables: [events, users]
+        starter: |
+          WITH d AS (
+            SELECT e.user_id, u.platform, e.ts::DATE AS dt,
+                   MIN(e.ts) FILTER (WHERE e.event_name = 'checkout') AS t_checkout,
+                   MIN(e.ts) FILTER (WHERE e.event_name = 'purchase') AS t_purchase
+            FROM events e
+            JOIN users u USING (user_id)
+            GROUP BY 1, 2, 3
+          )
+          SELECT
+        solution: |
+          WITH d AS (
+            SELECT e.user_id, u.platform, e.ts::DATE AS dt,
+                   MIN(e.ts) FILTER (WHERE e.event_name = 'checkout') AS t_checkout,
+                   MIN(e.ts) FILTER (WHERE e.event_name = 'purchase') AS t_purchase
+            FROM events e
+            JOIN users u USING (user_id)
+            GROUP BY 1, 2, 3
+          )
+          SELECT platform, median(date_diff('second', t_checkout, t_purchase) / 60.0) AS median_minutes
+          FROM d
+          WHERE t_purchase > t_checkout
+          GROUP BY platform
+        explain: Время прохождения шага — ранний индикатор трения. Мониторить его по платформам стоит рядом с конверсией.
+      - type: case
+        q: Конверсия «корзина → оплата» за неделю упала с 62% до 55%. Разбери по шагам.
+        steps:
+          - q: Первое действие?
+            options:
+              - Проверить полноту событий checkout и purchase и не менялось ли их логирование
+              - Сразу запустить скидки
+              - Написать пользователям
+            answer: 0
+            explain: Падение шага воронки часто — следствие изменений в логировании (новый SDK, переименованное событие).
+          - q: Данные в порядке. Падение есть только на Android-версии 5.12, выпущенной во вторник. Что дальше?
+            options:
+              - Сообщить команде Android с цифрами, оценить потери и предложить откат или хотфикс
+              - Подождать месяц
+              - Поменять дизайн на iOS
+            answer: 0
+            explain: Локализация по версии почти однозначно указывает на релиз.
+          - q: Как оценить ущерб?
+            options:
+              - Ожидаемые покупки на Android 5.12 при прежней конверсии минус фактические, умноженные на средний чек и маржу
+              - Просто сказать «много»
+              - Посчитать всех пользователей Android
+            answer: 0
+            explain: Конкретная оценка в заказах и деньгах помогает правильно приоритизировать исправление.
+        explain: Данные → сегменты → релизы → оценка ущерба → коммуникация. Это универсальная схема разбора падения шага воронки.

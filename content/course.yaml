@@ -4,7 +4,7 @@
 title: Product Analyst Trainer
 scenarios: scenarios
 files: [sql, more_sql, stats, more_stats, metrics, unit, ab, more_ab, python, ml, more_ml, ds, more_ds, causal, viz, product, more_product, data, interview, trials]
-deep: []
+deep: [sql, stats, metrics, unit, ab, python, ml, ds, causal, viz, product, interview]
 acts:
   - id: a1
     title: Акт I — Фундамент
