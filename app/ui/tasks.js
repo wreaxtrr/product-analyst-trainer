@@ -1,7 +1,7 @@
 import { html, useState, useRef, useEffect, useMemo, cls } from '../lib.js';
 import { Md, Inline } from './common.js';
-import { taskKey } from '../content.js';
-import { recordAttempt, recordReview, setDraft, getState, useStore } from '../store.js';
+import { taskKey, nodeStats } from '../content.js';
+import { recordAttempt, recordReview, recordPractice, setDraft, getState, useStore } from '../store.js';
 import { runSql, compareResults, sqlReady, fmtCell, resetDb } from '../engines/sql.js';
 import { runPython, pyStarted } from '../engines/py.js';
 import { SCHEMA, TABLE_DOCS, mulberry32 } from '../data/generate.js';
@@ -19,30 +19,37 @@ export function optionOrder(n, key) {
   return idx;
 }
 
-const TYPE_LABEL = { single: 'квиз', multi: 'квиз', number: 'расчёт', sql: 'SQL', python: 'Python' };
+const TYPE_LABEL = { single: 'квиз', multi: 'квиз', number: 'расчёт', sql: 'SQL', python: 'Python', case: 'кейс', order: 'порядок' };
 
-export function TaskCard({ node, index, task, mode = 'learn', onAnswered }) {
+// mode: learn — обычное решение в узле; review — карточка повторения;
+// practice — тренировка дня и марафон; exam — пробный экзамен (прогресс узлов не трогает).
+export function TaskCard({ node, index, task, mode = 'learn', onAnswered, label, tkey }) {
   const s = useStore();
-  const key = taskKey(node.id, index);
-  const st = s.tasks[key];
+  const key = tkey || taskKey(node.id, index);
+  const st = mode === 'exam' ? null : s.tasks[key];
+  const answered = useRef(false);
   const report = (correct) => {
     if (mode === 'review') recordReview(key, correct);
-    else {
+    else if (mode === 'practice') { if (!answered.current) { const xp = recordPractice(key, correct); if (xp) toast(`+${xp} опыта`); } }
+    else if (mode === 'learn') {
       const xp = recordAttempt(key, correct, { trial: node.isTrial });
       if (xp) toast(`+${xp} опыта`);
+      if (correct) celebrateIfNodeDone(node);
     }
-    onAnswered && onAnswered(correct);
+    if (!answered.current) { answered.current = true; onAnswered && onAnswered(correct); }
   };
   const reveal = () => {
     const t = getState().tasks[key];
-    if (mode !== 'review' && (!t || !t.attempts)) recordAttempt(key, false, { trial: node.isTrial });
+    if (mode === 'learn' && (!t || !t.attempts)) recordAttempt(key, false, { trial: node.isTrial });
+    if (mode === 'exam' && !answered.current) { answered.current = true; onAnswered && onAnswered(false); }
   };
-  const Comp = { single: Choice, multi: Choice, number: NumberTask, sql: CodeTask, python: CodeTask }[task.type];
+  const Comp = { single: Choice, multi: Choice, number: NumberTask, sql: CodeTask, python: CodeTask, case: CaseTask, order: OrderTask }[task.type];
   return html`
     <section class=${cls('task', st && st.solved && 'solved')} id=${'task-' + index}>
       <div class="task-head">
-        <span class="task-num">Задача ${index + 1}</span>
+        <span class="task-num">${label || `Задача ${index + 1}`}</span>
         <span class="badge">${TYPE_LABEL[task.type] || task.type}</span>
+        ${task.bug && html`<span class="badge bug">найди баг</span>`}
         ${st && st.solved ? html`<span class=${cls('badge', st.first ? 'ok' : 'ok-soft')}>${st.first ? 'с первой попытки' : 'решено'}</span>` : ''}
         ${mode !== 'review' && s.srs[key] ? html`<span class="badge warn" title="Задача в очереди повторения">повторение</span>` : ''}
       </div>
@@ -54,6 +61,79 @@ export function TaskCard({ node, index, task, mode = 'learn', onAnswered }) {
 function Explain({ task }) {
   if (!task.explain) return null;
   return html`<div class="explain"><div class="explain-title">Разбор</div><${Md} src=${task.explain} /></div>`;
+}
+
+function celebrateIfNodeDone(node) {
+  setTimeout(() => {
+    const st = nodeStats(node, getState());
+    if (st.done) dispatchEvent(new CustomEvent('celebrate', { detail: { title: node.title, stars: st.stars } }));
+  }, 50);
+}
+
+// Кейс: несколько шагов-вопросов, которые открываются по очереди.
+function CaseTask({ task, tkey, report }) {
+  const [step, setStep] = useState(0);
+  const [sel, setSel] = useState(null);
+  const [res, setRes] = useState(null);
+  const [failed, setFailed] = useState(false);
+  const [done, setDone] = useState(false);
+  const steps = task.steps || [];
+  const cur = steps[step];
+  const order = useMemo(() => (cur ? optionOrder(cur.options.length, `${tkey}/${step}`) : []), [tkey, step]);
+  const submit = () => {
+    const ok = sel === cur.answer;
+    setRes(ok);
+    if (!ok && !failed) { setFailed(true); report(false); }
+    if (ok && step === steps.length - 1) { setDone(true); report(true); }
+  };
+  const next = () => { setStep(step + 1); setSel(null); setRes(null); };
+  return html`
+    <div class="case-steps">
+      ${steps.slice(0, step).map((s, i) => html`<div class="case-done"><span class="case-n">Шаг ${i + 1}</span> <${Inline} text=${s.q} /> — <b><${Inline} text=${s.options[s.answer]} /></b></div>`)}
+    </div>
+    ${cur && html`<div class="case-cur">
+      <div class="case-n">Шаг ${step + 1} из ${steps.length}</div>
+      <${Md} src=${cur.q} />
+      <div class="options">${order.map((i) => {
+        const chosen = sel === i;
+        const mark = res !== null && chosen ? (res ? 'right' : 'wrong') : '';
+        return html`<button type="button" class=${cls('option', chosen && 'chosen', mark)} disabled=${res === true} onClick=${() => { if (res !== true) { setSel(i); setRes(null); } }}>
+          <span class="opt-mark rd" /><span class="opt-text"><${Inline} text=${cur.options[i]} /></span></button>`;
+      })}</div>
+      <div class="task-actions">
+        ${res !== true && html`<button class="btn primary" disabled=${sel === null} onClick=${submit}>Ответить</button>`}
+        ${res === true && step < steps.length - 1 && html`<button class="btn primary" onClick=${next}>Следующий шаг →</button>`}
+      </div>
+      ${res === false && html`<div class="verdict bad">Не то. Подумай ещё — шаг можно ответить снова.</div>`}
+      ${res === true && html`<div class="verdict good">Верно</div>${cur.explain && html`<div class="explain"><${Md} src=${cur.explain} /></div>`}`}
+    </div>`}
+    ${done && html`<${Explain} task=${task} />`}`;
+}
+
+// Расставить шаги в правильном порядке.
+function OrderTask({ task, tkey, report }) {
+  const init = useMemo(() => {
+    let o = optionOrder(task.items.length, tkey);
+    if (o.every((v, i) => v === i)) o = [...o.slice(1), o[0]];
+    return o;
+  }, [tkey]);
+  const [ord, setOrd] = useState(init);
+  const [res, setRes] = useState(null);
+  const move = (i, d) => {
+    const j = i + d;
+    if (j < 0 || j >= ord.length || res === true) return;
+    const n = [...ord]; [n[i], n[j]] = [n[j], n[i]]; setOrd(n); setRes(null);
+  };
+  const submit = () => { const ok = ord.every((v, i) => v === i); setRes(ok); report(ok); };
+  return html`
+    <div class="hint">Расставь кнопками ↑ ↓ в правильном порядке</div>
+    <ol class="order-list">${ord.map((v, i) => html`<li class=${cls('order-item', res !== null && (v === i ? 'right' : 'wrong'))}>
+      <span class="order-pos">${i + 1}</span><span class="opt-text"><${Inline} text=${task.items[v]} /></span>
+      <span class="order-btns"><button class="icon-btn small" onClick=${() => move(i, -1)} aria-label="Выше">↑</button><button class="icon-btn small" onClick=${() => move(i, 1)} aria-label="Ниже">↓</button></span>
+    </li>`)}</ol>
+    <div class="task-actions">${res !== true && html`<button class="btn primary" onClick=${submit}>Проверить порядок</button>`}</div>
+    ${res === false && html`<div class="verdict bad">Есть ошибки — неверные позиции подсвечены. Попробуй переставить.</div>`}
+    ${res === true && html`<div class="verdict good">Верно</div><${Explain} task=${task} />`}`;
 }
 
 function Choice({ task, tkey, report }) {

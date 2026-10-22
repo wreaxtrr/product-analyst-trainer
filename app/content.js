@@ -33,6 +33,18 @@ export async function loadCourse() {
       b.nodes.push(n.id);
     }
   }
+  // content/deep/<ветка>.yaml — углублённые разделы: теория, источники и задачи
+  // дописываются в конец уже существующих узлов (номера старых задач не меняются).
+  const deep = await Promise.all((meta.deep || []).map((f) => loadYaml(`content/deep/${f}.yaml`)));
+  for (const f of deep) {
+    for (const d of f.nodes || []) {
+      const n = nodes[d.id];
+      if (!n) throw new Error(`content/deep: нет узла ${d.id}`);
+      if (d.theory) n.theory = `${n.theory || ''}\n\n${d.theory}`;
+      if (d.sources) n.sources = [...(n.sources || []), ...d.sources];
+      if (d.tasks) n.tasks = [...n.tasks, ...d.tasks];
+    }
+  }
   const acts = meta.acts.map((a, k) => ({ ...a, index: k }));
   acts.forEach((act, k) => {
     for (const tr of act.tracks) {

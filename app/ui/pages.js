@@ -8,6 +8,7 @@ import { Bar, Stars, Md, Inline } from './common.js';
 import { TaskCard, ResultTable, SchemaPanel, CodeEditor, toast, optionOrder } from './tasks.js';
 import { runSql, sqlReady } from '../engines/sql.js';
 import { runPython } from '../engines/py.js';
+import { DRILLS, makeDrill } from '../data/drills.js';
 
 // ───────── Повторение ─────────
 export function dueKeys(s) {
@@ -15,7 +16,7 @@ export function dueKeys(s) {
   return Object.entries(s.srs).filter(([k, c]) => c.due <= t && findTask(k)).map(([k]) => k);
 }
 
-export function ReviewPage() {
+export function ReviewPage({ embedded = false }) {
   const s = useStore();
   const [queue] = useState(() => dueKeys(getState()));
   const [pos, setPos] = useState(0);
@@ -23,8 +24,8 @@ export function ReviewPage() {
   const total = Object.keys(s.srs).length;
   const upcoming = Object.values(s.srs).filter((c) => c.due > today()).length;
   const cur = queue[pos] ? findTask(queue[pos]) : null;
-  return html`<main class="page">
-    <h1>Повторение</h1>
+  return html`<${embedded ? 'div' : 'main'} class=${embedded ? '' : 'page'}>
+    ${!embedded && html`<h1>Повторение</h1>`}
     <div class="stat-row">
       <div class="stat"><div class="stat-v">${Math.max(queue.length - pos, 0)}</div><div class="stat-l">к повторению сегодня</div></div>
       <div class="stat"><div class="stat-v">${total}</div><div class="stat-l">карточек всего</div></div>
@@ -38,7 +39,7 @@ export function ReviewPage() {
         <div class="task-actions"><button class="btn primary" disabled=${!answered} onClick=${() => { setPos(pos + 1); setAnswered(false); window.scrollTo(0, 0); }}>Дальше →</button></div>
       </div>`
     : html`<div class="empty big">${queue.length ? 'Готово! На сегодня всё повторено.' : 'На сегодня повторять нечего.'}</div>`}
-  </main>`;
+  <//>`;
 }
 
 // ───────── Прогресс ─────────
@@ -124,6 +125,8 @@ export function SettingsPage() {
       <h3>Режим прохождения</h3>
       ${seg('free', [[false, 'По порядку'], [true, 'Свободный: всё открыто']])}
       <p class="small muted">В свободном режиме можно сразу решать любой узел — удобно, если часть тем уже знаешь.</p>
+      <h3>Эффекты</h3>
+      ${seg('fx', [[true, 'Анимации и конфетти'], [false, 'Спокойный режим']])}
     </section>
     <section class="panel">
       <h3>Прогресс</h3>
@@ -280,11 +283,27 @@ export function SelfTestPage() {
             if (!r.ok) throw new Error((r.msg || '') + ' ' + (r.err || ''));
             push({ id: n.id, i, ok: true, msg: (r.preview || '').split('\n').slice(0, 2).join(' | ').slice(0, 140) });
             continue;
+          } else if (t.type === 'case') {
+            if (!Array.isArray(t.steps) || !t.steps.length) throw new Error('у кейса нет шагов');
+            t.steps.forEach((st, j) => { if (!(st.answer >= 0 && st.answer < st.options.length)) throw new Error(`шаг ${j + 1}: answer вне диапазона`); });
+          } else if (t.type === 'order') {
+            if (!Array.isArray(t.items) || t.items.length < 3) throw new Error('в order нужно хотя бы 3 элемента');
           } else throw new Error('неизвестный тип ' + t.type);
           push({ id: n.id, i, ok: true, msg: t.type });
         } catch (e) {
           push({ id: n.id, i, ok: false, msg: String(e.message || e) });
         }
+      }
+    }
+    for (let i = 0; i < DRILLS.length; i++) {
+      for (const seed of [11, 222, 3333]) {
+        const d = makeDrill(i, seed);
+        try {
+          const r = await runSql(d.sql);
+          if (!r.rows.length) throw new Error('эталон вернул 0 строк');
+          if (r.rows.some((row) => row.some((v) => v === null || Number.isNaN(v)))) throw new Error('в эталоне NULL: ' + JSON.stringify(r.rows[0]));
+          push({ id: 'drill:' + d.id, i: '-', ok: true, msg: `${r.rows.length} строк · ${JSON.stringify(r.rows[0]).slice(0, 100)}` });
+        } catch (e) { push({ id: 'drill:' + d.id, i: '-', ok: false, msg: String(e.message || e) }); }
       }
     }
     for (const sc of course.scenarios) {

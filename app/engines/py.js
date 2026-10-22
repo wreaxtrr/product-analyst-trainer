@@ -8,6 +8,7 @@ const loaded = new Set();
 
 const DATE_COLS = {
   users: ['signup_date'], events: ['ts'], orders: ['ts'], experiment_users: ['assigned_at'], marketing_spend: ['dt'],
+  reviews: ['ts'], payments: ['ts'],
 };
 
 const SETUP = `

@@ -7,13 +7,20 @@ export const XP = { first: 10, trialFirst: 20, later: 4, review: 3, scenario: 15
 export const XP_PER_LEVEL = 150;
 
 function fresh() {
-  return { v: 1, xp: 0, tasks: {}, srs: {}, days: [], drafts: {}, scen: {}, settings: { theme: 'dark', free: false } };
+  return {
+    v: 1, xp: 0, tasks: {}, srs: {}, days: [], drafts: {}, scen: {},
+    practice: {}, train: null, exams: [], drills: { solved: 0, tried: 0, streak: 0, best: 0 },
+    settings: { theme: 'dark', free: false, fx: true },
+  };
 }
 
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (s && s.v === 1) return { ...fresh(), ...s, settings: { ...fresh().settings, ...(s.settings || {}) } };
+    if (s && s.v === 1) {
+      const f = fresh();
+      return { ...f, ...s, drills: { ...f.drills, ...(s.drills || {}) }, settings: { ...f.settings, ...(s.settings || {}) } };
+    }
   } catch (e) { /* пустой или битый localStorage — начинаем заново */ }
   return fresh();
 }
@@ -101,6 +108,40 @@ export function recordReview(key, correct) {
       srs[key] = { due: addDays(today(), SRS_STEPS[0]), step: 0 };
     }
     s.srs = srs;
+    markDay(s);
+  });
+}
+
+// Практика (тренировка дня): ошибка отправляет задачу в повторение, верный ответ даёт немного опыта.
+export function recordPractice(key, correct) {
+  let gained = 0;
+  update((s) => {
+    const day = today();
+    const p = s.practice[key] || {};
+    if (correct && p.day !== day) { gained = XP.review; s.xp += gained; }
+    s.practice = { ...s.practice, [key]: { day, ok: !!correct, n: (p.n || 0) + 1 } };
+    if (!correct) s.srs = { ...s.srs, [key]: { due: addDays(day, SRS_STEPS[0]), step: 0 } };
+    markDay(s);
+  });
+  return gained;
+}
+
+export function setTrain(train) { update((s) => { s.train = train; }); }
+
+export function recordExam(result) {
+  update((s) => {
+    s.exams = [...s.exams, result].slice(-30);
+    s.xp += Math.round(result.score * 2);
+    markDay(s);
+  });
+}
+
+export function recordDrill(correct) {
+  update((s) => {
+    const d = { ...s.drills };
+    d.tried += 1;
+    if (correct) { d.solved += 1; d.streak += 1; d.best = Math.max(d.best, d.streak); s.xp += 2; } else d.streak = 0;
+    s.drills = d;
     markDay(s);
   });
 }

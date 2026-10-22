@@ -63,6 +63,9 @@ export const SCHEMA = {
   marketing_spend: [['dt', 'DATE'], ['channel', 'VARCHAR'], ['spend', 'DOUBLE']],
   churn_features: [['customer_id', 'INTEGER'], ['platform', 'VARCHAR'], ['channel', 'VARCHAR'], ['tenure_days', 'INTEGER'], ['orders_90d', 'INTEGER'], ['avg_check', 'DOUBLE'], ['days_since_last_order', 'INTEGER'], ['support_tickets', 'INTEGER'], ['late_delivery_share', 'DOUBLE'], ['promo_share', 'DOUBLE'], ['churned', 'INTEGER']],
   promo_campaign: [['customer_id', 'INTEGER'], ['orders_prev_90d', 'INTEGER'], ['days_since_last_order', 'INTEGER'], ['avg_check', 'DOUBLE'], ['treatment', 'INTEGER'], ['converted', 'INTEGER']],
+  reviews: [['review_id', 'INTEGER'], ['order_id', 'INTEGER'], ['user_id', 'INTEGER'], ['ts', 'TIMESTAMP'], ['rating', 'INTEGER'], ['text', 'VARCHAR']],
+  payments: [['payment_id', 'INTEGER'], ['order_id', 'INTEGER'], ['ts', 'TIMESTAMP'], ['provider', 'VARCHAR'], ['amount', 'DOUBLE'], ['status', 'VARCHAR']],
+  delivery_fee_test: [['customer_id', 'INTEGER'], ['fee', 'INTEGER'], ['orders_30d', 'INTEGER'], ['gmv_30d', 'DOUBLE']],
 };
 
 export const TABLE_DOCS = {
@@ -74,6 +77,9 @@ export const TABLE_DOCS = {
   marketing_spend: 'Расходы на платные каналы привлечения по дням. У organic расходов нет, строк для него нет.',
   churn_features: 'Готовый датасет для модели оттока: признаки клиента на дату среза и таргет churned (1 — не сделал ни одного заказа в следующие 30 дней).',
   promo_campaign: 'Рандомизированная рассылка промокода: treatment = 1 — получил промокод. converted = 1 — сделал заказ в течение 14 дней.',
+  reviews: 'Отзывы на доставленные заказы: оценка от 1 до 5 и текст. Оставляет отзыв меньшинство клиентов, недовольные — чаще.',
+  payments: 'Платёжные транзакции из системы провайдера: success, failed, refunded. Данные «как есть» — с дублями, пропусками и ошибками выгрузки.',
+  delivery_fee_test: 'Рандомизированный тест платы за доставку: клиенты случайно получили плату 0, 99 или 199 ₽; заказы и GMV (без платы за доставку) за 30 дней.',
 };
 
 const CATEGORIES = ['Овощи и фрукты', 'Молочные продукты', 'Мясо и рыба', 'Выпечка', 'Напитки', 'Снеки', 'Бытовая химия', 'Готовая еда'];
@@ -250,8 +256,84 @@ export function generate(seed = 20240101) {
     promo.push({ customer_id: i, orders_prev_90d: prev, days_since_last_order: dsl, avg_check: check, treatment, converted: rng() < p ? 1 : 0 });
   }
 
-  const tables = { users, items, events, orders, experiment_users: expUsers, marketing_spend: spend, churn_features: churn, promo_campaign: promo };
+  const extra = generateExtra(seed, users, orders);
+  const tables = { users, items, events, orders, experiment_users: expUsers, marketing_spend: spend, churn_features: churn, promo_campaign: promo, ...extra };
   return { tables, activeDays, users };
+}
+
+// Дополнительные таблицы. Отдельный генератор случайных чисел — чтобы добавление
+// новых таблиц не меняло уже существующие (и эталонные ответы к ним).
+const REVIEW_TEXT = {
+  good: ['Всё отлично, спасибо!', 'Привезли быстро, всё свежее.', 'Курьер вежливый, заказ полный.', 'Как всегда на высоте.', 'Удобно и быстро, буду заказывать ещё.', 'Отличный сервис, продукты свежие.', 'Всё пришло вовремя, спасибо курьеру.', 'Хороший ассортимент, доставка в срок.'],
+  late: ['Опоздали почти на час.', 'Доставка задержалась, ждал долго.', 'Курьер опоздал, продукты привезли поздно.', 'Обещали за 30 минут, привезли через полтора часа.', 'Сильно опоздали со слотом доставки.'],
+  missing: ['Не привезли часть заказа.', 'В заказе не хватало молока, а деньги списали.', 'Забыли положить два товара.', 'Привезли не всё, пришлось писать в поддержку.'],
+  quality: ['Овощи были вялые.', 'Хлеб оказался чёрствым.', 'Молоко с истекающим сроком годности.', 'Фрукты помятые, качество так себе.', 'Мясо было не первой свежести.'],
+  courier: ['Курьер был грубым.', 'Курьер не поднялся на этаж, хотя просили.', 'Курьер не позвонил и оставил пакет у двери.'],
+  app: ['Приложение зависло на оплате.', 'Не проходила оплата с первого раза.', 'Сайт очень тормозит при оформлении.', 'Промокод не применился в корзине.'],
+  neutral: ['В целом нормально.', 'Цены немного выросли.', 'Хотелось бы больше акций.', ''],
+};
+
+function generateExtra(seed, users, orders) {
+  const rng = mulberry32(seed + 777);
+  const normal = () => { let u = 0; while (u === 0) u = rng(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng()); };
+  const poisson = (lam) => { const L = Math.exp(-lam); let k = 0, p = 1; do { k++; p *= rng(); } while (p > L); return k - 1; };
+  const one = (arr) => arr[Math.floor(rng() * arr.length)];
+  const byId = new Map(users.map((u) => [u.user_id, u]));
+  const addHours = (ts, h) => {
+    const t = new Date(ts.replace(' ', 'T') + 'Z').getTime() + h * 3600000;
+    const d = new Date(t);
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+  };
+
+  // Отзывы
+  const reviews = [];
+  let reviewId = 0;
+  for (const o of orders) {
+    if (o.status !== 'delivered') continue;
+    const u = byId.get(o.user_id);
+    const issues = [];
+    let pLate = 0.13 + (u.city === 'Москва' ? 0.06 : 0) + (o.ts.slice(11, 13) >= '18' && o.ts.slice(11, 13) <= '21' ? 0.05 : 0);
+    if (rng() < pLate) issues.push('late');
+    if (rng() < 0.05) issues.push('missing');
+    if (rng() < 0.045) issues.push('quality');
+    if (rng() < 0.02) issues.push('courier');
+    if (rng() < (u.platform === 'web' ? 0.05 : 0.015)) issues.push('app');
+    if (rng() >= (issues.length ? 0.55 : 0.18)) continue;
+    let rating = 5 - issues.reduce((s, k) => s + (k === 'app' ? 1 : 2), 0) + (rng() < 0.15 ? -1 : 0) + (rng() < 0.1 ? 1 : 0);
+    rating = Math.max(1, Math.min(5, Math.round(rating)));
+    const parts = issues.length ? issues.map((k) => one(REVIEW_TEXT[k])) : [one(REVIEW_TEXT.good)];
+    if (rng() < 0.3) parts.push(one(REVIEW_TEXT.neutral));
+    reviews.push({ review_id: ++reviewId, order_id: o.order_id, user_id: o.user_id, ts: addHours(o.ts, 1 + Math.floor(rng() * 40)), rating, text: parts.filter(Boolean).join(' ') });
+  }
+
+  // Платежи — с намеренными проблемами качества данных
+  const payments = [];
+  let payId = 0;
+  for (const o of orders) {
+    const u = byId.get(o.user_id);
+    const provider = u.platform === 'ios' && rng() < 0.4 ? 'applepay' : rng() < 0.28 ? 'sbp' : 'card';
+    if (rng() < 0.06) payments.push({ payment_id: ++payId, order_id: o.order_id, ts: addHours(o.ts, -0.01), provider, amount: o.revenue, status: 'failed' });
+    if (o.status === 'delivered' && rng() < 0.004) continue; // платёж потерялся при выгрузке
+    let amount = o.revenue;
+    if (provider === 'sbp' && o.ts >= '2024-06-10' && rng() < 0.06) amount = Math.round(o.revenue * 100); // баг: сумма в копейках
+    payments.push({ payment_id: ++payId, order_id: o.order_id, ts: o.ts, provider, amount, status: 'success' });
+    if (rng() < 0.012) payments.push({ payment_id: ++payId, order_id: o.order_id, ts: addHours(o.ts, 0.0006), provider, amount, status: 'success' }); // дубль
+    if (o.status === 'cancelled') payments.push({ payment_id: ++payId, order_id: o.order_id, ts: addHours(o.ts, 2 + rng() * 20), provider, amount, status: 'refunded' });
+  }
+
+  // Рандомизированный тест платы за доставку
+  const fee = [];
+  const FEES = [0, 99, 199];
+  for (let i = 1; i <= 6000; i++) {
+    const f = FEES[Math.floor(rng() * 3)];
+    const lam = Math.exp(0.6 * normal()) * 1.6 * Math.exp(-0.0022 * f);
+    const n = poisson(lam);
+    let gmv = 0;
+    for (let k = 0; k < n; k++) gmv += 1300 * Math.exp(0.35 * normal()) * (1 + 0.0009 * f);
+    fee.push({ customer_id: i, fee: f, orders_30d: n, gmv_30d: Math.round(gmv * 100) / 100 });
+  }
+
+  return { reviews, payments, delivery_fee_test: fee };
 }
 
 export function toCsv(rows, cols) {
