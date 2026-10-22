@@ -113,7 +113,7 @@ export function MapPage() {
     <div class="page-head">
       <div>
         <h1 class="grad">Карта навыков</h1>
-        <p class="muted">Пять актов от SQL до уровня мидла. Ветки внутри акта идут параллельно, между актами — испытания. Боковые ветки открываются испытанием или уровнем.</p>
+        <p class="muted">Пять актов от SQL до уровня мидла. Ветки внутри акта идут параллельно, между актами — испытания. Боковые ветки открываются испытанием или уровнем. Поиск по всему курсу — <a href="#" onClick=${(e) => { e.preventDefault(); dispatchEvent(new CustomEvent('open-palette')); }}>Ctrl+K</a>, термины — в <a href="#/glossary">глоссарии</a>.</p>
       </div>
     </div>
     <${Hero} s=${s} />

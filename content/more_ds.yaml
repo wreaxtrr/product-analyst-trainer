@@ -182,8 +182,8 @@ nodes:
       > [!interview]
       > «В поддержку пришло 50 тысяч обращений, разберись, на что жалуются» — ответ: выборка и ручная разметка для понимания тем, затем классификатор (правила, TF-IDF + логрег или LLM) с проверкой качества на отложенной разметке, затем динамика тем и их связь с оттоком.
     sources:
-      - title: "scikit-learn: Working with text data"
-        url: https://scikit-learn.org/stable/tutorial/text_analytics/working_with_text_data.html
+      - title: "scikit-learn: Text feature extraction (TF-IDF)"
+        url: https://scikit-learn.org/stable/modules/feature_extraction.html#text-feature-extraction
       - title: Natasha — NLP для русского языка
         url: https://github.com/natasha/natasha
     tasks:

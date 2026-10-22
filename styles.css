@@ -444,6 +444,12 @@ pre.out { margin: 4px 0 10px; padding: 11px 13px; border-radius: 10px; backgroun
 .palette-kind { font-size: 11px; color: var(--faint); font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
 .palette-foot { padding: 8px 14px; border-top: 1px solid var(--line); }
 .radar { max-width: 520px; margin: 0 auto; }
+.glossary-search { width: 100%; margin: 6px 0 16px; font-family: var(--body); }
+.glossary { display: flex; flex-direction: column; gap: 10px; }
+.gl-item { padding: 13px 16px; border-radius: 14px; background: var(--card); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); border: 1px solid var(--line); }
+.gl-term { font-family: var(--display); font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+.gl-def { color: var(--text); font-size: 14.5px; line-height: 1.6; }
+.gl-link { display: inline-block; margin-top: 6px; }
 .radar text { fill: var(--muted); font-size: 11px; font-family: var(--body); }
 
 /* ═══════════════════ Виджеты ═══════════════════ */

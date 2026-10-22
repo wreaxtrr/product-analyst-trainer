@@ -70,6 +70,7 @@ export async function loadCourse() {
   });
   course = { title: meta.title, acts, branches, nodes, scenarios: [] };
   if (meta.scenarios) course.scenarios = (await loadYaml(`content/${meta.scenarios}.yaml`)).scenarios || [];
+  course.glossary = meta.glossary ? ((await loadYaml(`content/${meta.glossary}.yaml`)).terms || []) : [];
   return course;
 }
 

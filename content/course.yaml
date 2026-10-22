@@ -3,8 +3,9 @@
 # side: true — боковая ветка: открывается испытанием прошлого акта ИЛИ уровнем level.
 title: Product Analyst Trainer
 scenarios: scenarios
-files: [sql, more_sql, stats, more_stats, metrics, unit, ab, more_ab, python, ml, more_ml, ds, more_ds, causal, viz, product, more_product, data, interview, trials]
-deep: [sql, stats, metrics, unit, ab, python, ml, ds, causal, viz, product, interview]
+glossary: glossary
+files: [sql, more_sql, stats, more_stats, metrics, more_metrics, unit, ab, more_ab, python, ml, more_ml, ds, more_ds, causal, viz, product, more_product, data, interview, trials]
+deep: [sql, stats, metrics, unit, ab, python, ml, ds, causal, viz, product, interview, extra]
 acts:
   - id: a1
     title: Акт I — Фундамент
@@ -23,7 +24,7 @@ acts:
       - branch: sql
         nodes: [sql.windows, sql.dates, sql.funnels, sql.advanced]
       - branch: metrics
-        nodes: [metrics.activity, metrics.retention, metrics.funnel, metrics.tree]
+        nodes: [metrics.activity, metrics.retention, metrics.funnel, metrics.tree, metrics.attribution]
       - branch: unit
         nodes: [unit.revenue, unit.ltv]
     trial: trial.2
@@ -65,7 +66,7 @@ acts:
     summary: Инциденты, цены, приоритизация, хранилище данных и ClickHouse, продуктовые кейсы и подготовка к собеседованию.
     tracks:
       - branch: product
-        nodes: [product.drop, product.prioritize, product.pricing, product.casestudy]
+        nodes: [product.drop, product.prioritize, product.pricing, product.stakeholders, product.casestudy]
       - branch: data
         nodes: [data.modeling, data.quality, data.clickhouse]
       - branch: interview

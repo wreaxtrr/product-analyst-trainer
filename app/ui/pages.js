@@ -282,6 +282,28 @@ export function SandboxPage() {
   </main>`;
 }
 
+// ───────── Глоссарий ─────────
+export function GlossaryPage({ q: q0 = '' }) {
+  const [q, setQ] = useState(q0);
+  const terms = useMemo(() => [...course.glossary].sort((a, b) => a.term.localeCompare(b.term, 'ru')), []);
+  const ql = q.trim().toLowerCase();
+  const list = ql ? terms.filter((t) => t.term.toLowerCase().includes(ql) || t.def.toLowerCase().includes(ql)) : terms;
+  return html`<main class="page narrow">
+    <h1 class="grad">Глоссарий</h1>
+    <p class="muted">${terms.length} терминов уровня мидла — коротко и со ссылкой на урок, где тема разобрана подробно. Удобно повторять перед собеседованием.</p>
+    <input class="input glossary-search" placeholder="Поиск по терминам и определениям…" value=${q} onInput=${(e) => setQ(e.target.value)} />
+    <div class="glossary">${list.map((t) => {
+      const n = course.nodes[t.node];
+      return html`<div class="gl-item" id=${'t-' + t.term}>
+        <div class="gl-term">${t.term}</div>
+        <div class="gl-def"><${Inline} text=${t.def} /></div>
+        ${n && html`<a class="gl-link small" href=${`#/node/${n.id}`}>→ ${n.title}</a>`}
+      </div>`;
+    })}</div>
+    ${!list.length && html`<div class="empty">Ничего не нашлось</div>`}
+  </main>`;
+}
+
 // ───────── Самопроверка контента ─────────
 export function SelfTestPage() {
   const [rows, setRows] = useState([]);
@@ -336,7 +358,12 @@ export function SelfTestPage() {
         } catch (e) { push({ id: 'drill:' + d.id, i: '-', ok: false, msg: String(e.message || e) }); }
       }
     }
+    for (const t of course.glossary) {
+      if (!course.nodes[t.node]) push({ id: 'glossary:' + t.term, i: '-', ok: false, msg: `нет узла ${t.node}` });
+    }
+    push({ id: 'glossary', i: '-', ok: true, msg: `${course.glossary.length} терминов` });
     for (const sc of course.scenarios) {
+      if (sc.node && !course.nodes[sc.node]) push({ id: 'scenario:' + sc.id, i: '-', ok: false, msg: `нет узла ${sc.node}` });
       const bad = sc.questions.filter((q) => !(q.answer >= 0 && q.answer < q.options.length));
       push({ id: 'scenario:' + sc.id, i: '-', ok: !bad.length, msg: bad.length ? 'answer вне диапазона' : `${sc.questions.length} вопроса` });
     }

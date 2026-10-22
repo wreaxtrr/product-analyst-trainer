@@ -7,7 +7,7 @@ import { MapPage } from './ui/map.js';
 import { NodePage } from './ui/node.js';
 import { PracticePage } from './ui/practice.js';
 import { CommandPalette } from './ui/palette.js';
-import { ProgressPage, SettingsPage, MetricsPage, SandboxPage, SelfTestPage, dueKeys } from './ui/pages.js';
+import { ProgressPage, SettingsPage, MetricsPage, SandboxPage, SelfTestPage, GlossaryPage, dueKeys } from './ui/pages.js';
 
 // Конфетти при прохождении узла — короткая анимация на canvas.
 function Celebrate({ info, onClose }) {
@@ -78,6 +78,7 @@ function App() {
   else if (p0 === 'metrics') page = html`<${MetricsPage} id=${p1} />`;
   else if (p0 === 'sandbox') page = html`<${SandboxPage} />`;
   else if (p0 === 'selftest') page = html`<${SelfTestPage} />`;
+  else if (p0 === 'glossary') page = html`<${GlossaryPage} key=${route.query.q || ''} q=${route.query.q || ''} />`;
   else page = html`<main class="page"><h1>Страница не найдена</h1><a href="#/">На карту</a></main>`;
   return html`<${Header} route=${route} dueCount=${dueKeys(s).length} xp=${s.xp} />${page}<${Toast} text=${toastText} /><${Celebrate} info=${cele} onClose=${() => setCele(null)} /><${CommandPalette} />`;
 }

@@ -6,7 +6,7 @@ import { navigate } from '../router.js';
 const PAGES = [
   ['Карта навыков', '/'], ['Тренировка дня', '/practice'], ['Повторение', '/practice/review'], ['Пробный экзамен', '/practice/exam'],
   ['SQL-марафон', '/practice/marathon'], ['Тренажёр выбора метрик', '/metrics'], ['Песочница SQL и Python', '/sandbox'],
-  ['Прогресс', '/progress'], ['Настройки', '/settings'],
+  ['Глоссарий', '/glossary'], ['Прогресс', '/progress'], ['Настройки', '/settings'],
 ];
 
 function strip(md) { return String(md || '').replace(/```[\s\S]*?```/g, ' ').replace(/[#>*`|$\\]/g, ' ').replace(/\s+/g, ' ').toLowerCase(); }
@@ -20,6 +20,9 @@ export function CommandPalette() {
     const items = PAGES.map(([t, p]) => ({ kind: 'страница', title: t, path: p, text: t.toLowerCase() }));
     for (const n of allNodesOrdered()) {
       items.push({ kind: n.isTrial ? 'испытание' : course.branches[n.branch].title, title: n.title, path: `/node/${n.id}`, text: `${n.title} ${n.summary} ${strip(n.theory)}`.toLowerCase(), color: course.branches[n.branch].color });
+    }
+    for (const t of course.glossary || []) {
+      items.push({ kind: 'термин', title: t.term, path: `/glossary?q=${encodeURIComponent(t.term)}`, text: `${t.term} ${t.def}`.toLowerCase(), color: 'var(--accent3)' });
     }
     return items;
   }, []);
