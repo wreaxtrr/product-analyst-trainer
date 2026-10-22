@@ -1,0 +1,386 @@
+branch: ds
+title: Data Science кейсы
+color: "#ff9cac"
+nodes:
+
+  - id: ds.churn
+    title: "Кейс: модель оттока от и до"
+    summary: От бизнес-вопроса до денег — как модель превращается в кампанию и как доказать, что она работает.
+    theory: |
+      Это сквозной кейс, который часто дают продуктовым аналитикам с DS-уклоном: «у нас растёт отток, сделай что-нибудь». Разберём весь путь.
+
+      ## 1. Решение и экономика
+
+      Модель нужна, чтобы выбрать, **кому** отправить удерживающее предложение (скидку на следующий заказ). Экономика контакта: стоимость c, доля удерживаемых s, маржа удержанного клиента m. Порог $p^* = c / (s \cdot m)$ — из урока про метрики классификации.
+
+      ## 2. Датасет
+
+      - **Срез:** каждый понедельник; клиенты, у которых был хотя бы один заказ за последние 90 дней.
+      - **Таргет:** нет заказов в следующие 30 дней.
+      - **Признаки (только до среза):** RFM (давность, частота, деньги), тренд частоты (последние 30 дней против предыдущих 60), опыт сервиса (опоздания, отмены, обращения), промо-зависимость, канал, платформа.
+
+      В тренажёре этот датасет уже собран — таблица `churn_features`.
+
+      ## 3. Модель и оценка
+
+      Бейзлайн — правило «давность > 30 дней». Модель — логистическая регрессия или бустинг. Для решения «кому звонить» важна не AUC, а **качество верхушки**: precision@k (доля уходящих среди топ-k по скору) и **lift** — во сколько раз отток в топе выше среднего.
+
+      ## 4. Кампания и измерение
+
+      > [!key] Модель — не доказательство эффекта
+      > Даже идеальная модель оттока не говорит, поможет ли скидка. Эффект кампании измеряется только **экспериментом**: среди отобранных моделью клиентов случайная часть (например, 20%) не получает предложение (holdout). Разница удержания между получившими и holdout — и есть эффект кампании.
+
+      Частая ловушка: «отправили скидку клиентам с высоким риском, 60% из них остались — кампания удержала 60%». Нет: многие остались бы и так. Без контрольной группы эффект неизвестен.
+
+      ## 5. Кому на самом деле давать скидку
+
+      Модель оттока ранжирует по **риску ухода**, а нам важен **прирост от воздействия** — uplift. Часть высокорисковых клиентов уйдёт в любом случае, часть низкорисковых купит и без скидки (и скидка просто съест маржу). Правильная постановка — uplift-модель: об этом урок «Uplift-моделирование».
+
+      ## 6. Жизнь в проде
+
+      - Еженедельный пересчёт скоров (batch scoring).
+      - Мониторинг: распределение скоров, дрейф признаков (PSI), калибровка — совпадает ли прогнозный отток с фактическим.
+      - Переобучение по расписанию или при деградации.
+
+      > [!interview]
+      > На кейс-интервью ответ по этой схеме — решение → экономика → датасет без утечек → бейзлайн → модель → метрика верхушки → эксперимент с holdout → мониторинг — закрывает 90% вопросов.
+    sources:
+      - title: "Evidently AI: ML monitoring"
+        url: https://www.evidentlyai.com/ml-in-production/model-monitoring
+      - title: RFM segmentation (Wikipedia)
+        url: https://en.wikipedia.org/wiki/RFM_(market_research)
+    tasks:
+      - type: python
+        q: |
+          Модель из прошлых уроков (логистическая регрессия на `num`, разбиение `test_size=0.3, random_state=42, stratify=y`). Возьми **10% тестовых клиентов с наибольшей вероятностью оттока** (`proba >= np.quantile(proba, 0.9)`) и посчитай среди них **фактическую долю ушедших**. Положи её в `result`.
+        tables: [churn_features]
+        packages: [scikit-learn]
+        starter: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X, y = churn_features[num], churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+          model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)).fit(X_tr, y_tr)
+          proba = model.predict_proba(X_te)[:, 1]
+
+          result = ...
+        solution: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X, y = churn_features[num], churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+          model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)).fit(X_tr, y_tr)
+          proba = model.predict_proba(X_te)[:, 1]
+          top = proba >= np.quantile(proba, 0.9)
+          result = y_te[top].mean()
+        test: |
+          assert abs(float(result) - float(expected)) < 0.02, f'Получено {float(result):.3f}, ожидалось ≈ {float(expected):.3f}'
+        explain: Сравни со средней долей оттока `y.mean()` — отношение и есть **lift** верхнего дециля. Lift 2–3 означает, что модель концентрирует уходящих в верхушке, и кампания по топу эффективнее случайной рассылки.
+      - type: python
+        q: |
+          Оцени **ожидаемую прибыль** кампании на тестовой выборке: контактируем всех с `proba >= 0.333`; ожидаемая прибыль одного контакта — `proba * 0.3 * 1000 - 100`. Положи в `result` суммарную ожидаемую прибыль (₽).
+        tables: [churn_features]
+        packages: [scikit-learn]
+        starter: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X, y = churn_features[num], churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+          model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)).fit(X_tr, y_tr)
+          proba = model.predict_proba(X_te)[:, 1]
+
+          result = ...
+        solution: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X, y = churn_features[num], churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+          model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)).fit(X_tr, y_tr)
+          proba = model.predict_proba(X_te)[:, 1]
+          sel = proba >= 0.333
+          result = float((proba[sel] * 0.3 * 1000 - 100).sum())
+        test: |
+          assert abs(float(result) - float(expected)) / abs(float(expected)) < 0.02, f'Получено {float(result):.0f} ₽, ожидалось ≈ {float(expected):.0f} ₽'
+        explain: Это оценка «на бумаге» — она верна, только если вероятности откалиброваны и s = 30% подтверждено экспериментом. Перед масштабированием кампанию всё равно запускают с holdout-группой.
+      - type: single
+        q: Отправили скидку 5 000 клиентам с высоким риском оттока. Через месяц 62% из них сделали заказ. Маркетинг пишет «кампания удержала 62% клиентов». Что не так?
+        options:
+          - Всё верно
+          - Неизвестно, сколько из них заказали бы и без скидки — нужна контрольная группа (holdout) среди отобранных клиентов
+          - Нужно было отправить больше скидок
+          - 62% — это мало, кампания провалилась
+        answer: 1
+        explain: Эффект кампании — разница между получившими и не получившими предложение среди одинаково отобранных клиентов. Без holdout его не посчитать.
+      - type: multi
+        q: Что стоит мониторить у модели оттока в проде?
+        options:
+          - Распределение прогнозных вероятностей во времени
+          - Дрейф входных признаков (например, PSI)
+          - Совпадение прогнозного и фактического оттока (калибровку) по мере поступления таргета
+          - Число строк кода в репозитории модели
+          - Эффект кампании относительно holdout-группы
+        answer: [0, 1, 2, 4]
+        explain: Модель может деградировать незаметно — поведение клиентов меняется, логика признаков ломается. Мониторинг бизнес-эффекта через holdout — главный сигнал.
+
+  - id: ds.forecast
+    title: Прогноз временных рядов
+    summary: Тренд, недельная сезонность, честные бейзлайны и backtesting.
+    theory: |
+      Аналитиков постоянно просят прогнозировать: заказы на завтра (для курьеров и складов), выручку на квартал, нагрузку на поддержку. Хороший прогноз начинается не с нейросети, а с понимания ряда и **бейзлайнов**.
+
+      ## Компоненты ряда
+
+      $$y_t = \text{тренд}_t + \text{сезонность}_t + \text{праздники/промо}_t + \text{шум}_t$$
+
+      У доставки продуктов сильная **недельная** сезонность (выходные), есть праздники (8 марта, Новый год), промо и тренд роста.
+
+      ## Бейзлайны
+
+      | Метод | Прогноз на t | Когда хорош |
+      |---|---|---|
+      | Naive | $y_{t-1}$ | ряд без сезонности |
+      | Seasonal naive | $y_{t-7}$ | сильная недельная сезонность |
+      | Скользящее среднее | среднее последних k дней | шумный ряд без тренда |
+      | Среднее того же дня недели | среднее $y_{t-7}, y_{t-14}, \ldots$ | сезонность + шум |
+
+      Любая сложная модель (ETS, SARIMA, Prophet, бустинг на лагах) обязана **обыграть seasonal naive**. На практике это удаётся далеко не всегда.
+
+      ## Метрики
+
+      - **MAE** — средняя абсолютная ошибка, в единицах ряда. Понятна бизнесу: «ошибаемся в среднем на 6 заказов в день».
+      - **MAPE** — средняя абсолютная процентная ошибка. Ломается на маленьких значениях: если в какой-то день был 1 заказ, ошибка в 3 заказа даёт 300%.
+      - **WAPE** = $\sum|y - \hat y| / \sum |y|$ — процент от общего объёма, устойчив к маленьким значениям. Часто лучший выбор для бизнеса.
+
+      ## Backtesting
+
+      > [!warn]
+      > Случайная кросс-валидация для временного ряда — утечка: модель учится на будущем. Правильно — **rolling origin**: обучаемся на данных до даты T, прогнозируем T+1…T+h, сдвигаем T и повторяем.
+
+      ## Интервалы
+
+      Точечный прогноз почти бесполезен для планирования. Складу нужен не «будет 70 заказов», а «с вероятностью 90% не больше 85». Поэтому отдают **квантили** или интервалы прогноза.
+
+      > [!interview]
+      > «Как будешь прогнозировать заказы на следующую неделю?» — с бейзлайна seasonal naive, метрики WAPE, backtesting по нескольким неделям. Сложную модель — только если она стабильно лучше бейзлайна. И обязательно — учёт праздников и запланированных промо.
+    sources:
+      - title: "Hyndman & Athanasopoulos — Forecasting: Principles and Practice (бесплатно)"
+        url: https://otexts.com/fpp3/
+        note: лучший учебник по прогнозированию
+      - title: Prophet documentation
+        url: https://facebook.github.io/prophet/
+    tasks:
+      - type: python
+        q: |
+          В `daily_orders` — число доставленных заказов по дням (колонки `dt`, `orders`, `revenue`, дни без заказов — с нулём). Посчитай **MAE** двух бейзлайнов на последних **14 днях** (18–31 июля): naive (`y[t-1]`) и seasonal naive (`y[t-7]`). Положи в `result` кортеж `(mae_naive, mae_seasonal)`.
+        tables: [daily_orders]
+        starter: |
+          s = daily_orders.set_index('dt')['orders']
+
+          result = ...
+        solution: |
+          s = daily_orders.set_index('dt')['orders']
+          naive = s.shift(1)
+          seasonal = s.shift(7)
+          test = s.index >= '2024-07-18'
+          mae_naive = (s[test] - naive[test]).abs().mean()
+          mae_seasonal = (s[test] - seasonal[test]).abs().mean()
+          result = (mae_naive, mae_seasonal)
+        explain: |-
+          В наших данных выигрывает naive. В июле новые регистрации прекратились, ряд плавно падает, и вчерашний день оказывается лучшей подсказкой, чем день неделю назад. К тому же недельная сезонность здесь слабее дневного шума. Это хороший урок: бейзлайны надо сравнивать на своих данных, а не выбирать по учебнику. Любая модель должна обыгрывать **лучший** из них.
+      - type: number
+        q: |
+          Факт за два дня — 100 и 200 заказов, прогноз — 110 и 180. Чему равна **MAPE** (в процентах)?
+        answer: 10
+        atol: 0.01
+        unit: '%'
+        explain: Ошибки — 10% и 10%, среднее — 10%. WAPE здесь = (10 + 20) / 300 = 10% — совпадение. Если бы в один из дней был 1 заказ, MAPE взлетела бы, а WAPE почти не изменилась.
+      - type: single
+        q: Почему для прогноза временного ряда нельзя использовать обычную случайную кросс-валидацию?
+        options:
+          - Это слишком медленно
+          - Модель будет обучаться на точках из будущего относительно проверочных — оценка качества получится оптимистичной
+          - Временные ряды нельзя делить на части
+          - Потому что MAE не работает с кросс-валидацией
+        answer: 1
+        explain: |-
+          Корректная схема — rolling origin (TimeSeriesSplit): обучение только на прошлом относительно каждой точки проверки.
+      - type: single
+        q: Ряд заказов по дням для маленького города, где в некоторые дни 0–2 заказа. Какую метрику ошибки выбрать для отчёта?
+        options:
+          - MAPE
+          - WAPE или MAE
+          - Accuracy
+          - ROC AUC
+        answer: 1
+        explain: MAPE взрывается на маленьких значениях (а на нулях вообще не определена). WAPE нормирует ошибку на общий объём.
+      - type: multi
+        q: Что стоит учесть в модели прогноза заказов доставки продуктов?
+        options:
+          - Недельную сезонность
+          - Праздники (8 марта, предновогодние дни)
+          - Запланированные промо-акции
+          - Цвет логотипа приложения
+          - Тренд роста аудитории
+        answer: [0, 1, 2, 4]
+        explain: Праздники и промо — отдельные признаки или ручные корректировки. Без них модель будет систематически ошибаться в самые важные для бизнеса дни.
+
+  - id: ds.uplift
+    title: Uplift-моделирование
+    summary: Кому давать скидку — тем, кто уйдёт, или тем, на кого скидка подействует?
+    theory: |
+      ## Четыре типа клиентов
+
+      | Тип | Без воздействия | С воздействием | Что делать |
+      |---|---|---|---|
+      | Persuadables (убеждаемые) | не купит | купит | **воздействовать** |
+      | Sure things (уверенные) | купит | купит | не тратить деньги |
+      | Lost causes (потерянные) | не купит | не купит | не тратить деньги |
+      | Sleeping dogs («не будите») | купит | не купит | **не трогать** |
+
+      Модель вероятности покупки (или оттока) смешивает persuadables с sure things и lost causes. **Uplift** — разница вероятностей с воздействием и без:
+
+      $$\tau(x) = P(Y=1 \mid x, T=1) - P(Y=1 \mid x, T=0)$$
+
+      Воздействовать выгодно на тех, у кого $\tau(x) \cdot m > c$.
+
+      ## Данные
+
+      Для uplift нужны данные **рандомизированного** эксперимента: в части клиентов воздействие было, в части — нет, и назначение случайно. В «Корзинке» есть таблица `promo_campaign`: 10 000 клиентов, половина случайно получила промокод (`treatment = 1`), `converted` — сделал ли заказ в течение 14 дней.
+
+      ## Подходы
+
+      - **Сегментный** — посчитать uplift (разницу конверсий treatment и control) в понятных сегментах. Просто, интерпретируемо, часто достаточно.
+      - **T-learner** — две модели: $\hat\mu_1(x)$ на treatment, $\hat\mu_0(x)$ на control; $\hat\tau = \hat\mu_1 - \hat\mu_0$.
+      - **S-learner** — одна модель с признаком T: $\hat\tau = \hat\mu(x, 1) - \hat\mu(x, 0)$.
+      - Специальные: X-learner, causal forest, модели с трансформацией таргета.
+
+      ## Как оценить uplift-модель
+
+      Для одного клиента uplift не наблюдаем — он либо получил промо, либо нет. Поэтому оценка — **по группам**: отсортировать клиентов по предсказанному uplift, взять топ-k% и посчитать в нём фактическую разницу конверсий treatment и control. Кривая этой величины по k — **Qini-кривая** (или uplift-кривая).
+
+      > [!key]
+      > Самая частая ошибка — давать скидки самым «вероятным покупателям». Они купили бы и так: скидка просто дарит им маржу. Самые рискованные по оттоку часто тоже бесполезны — их не удержит и скидка.
+    sources:
+      - title: "scikit-uplift: user guide"
+        url: https://www.uplift-modeling.com/en/latest/user_guide/index.html
+      - title: "Gutierrez & Gérardy: Causal Inference and Uplift Modeling (обзор)"
+        url: https://proceedings.mlr.press/v67/gutierrez17a.html
+    tasks:
+      - type: sql
+        q: |
+          Посчитай общий эффект рассылки промокода в `promo_campaign`: конверсия в treatment, в control и uplift (разница). Колонки: `cr_treatment`, `cr_control`, `uplift`.
+        tables: [promo_campaign]
+        starter: |
+          SELECT AVG(converted) FILTER (WHERE treatment = 1) AS cr_treatment
+          FROM promo_campaign
+        solution: |
+          SELECT AVG(converted) FILTER (WHERE treatment = 1) AS cr_treatment,
+                 AVG(converted) FILTER (WHERE treatment = 0) AS cr_control,
+                 AVG(converted) FILTER (WHERE treatment = 1) - AVG(converted) FILTER (WHERE treatment = 0) AS uplift
+          FROM promo_campaign
+        explain: Это средний эффект по всем (ATE). Он положительный, но вопрос в том, на ком именно промокод работает, а на ком только тратит деньги.
+      - type: sql
+        q: |
+          Посчитай uplift по сегментам: `'new'` — нет заказов за 90 дней (`orders_prev_90d = 0`); `'sleeping'` — были заказы, но последний больше 30 дней назад; `'loyal'` — 5 и больше заказов (и последний не позже 30 дней); `'regular'` — остальные. Колонки: `segment`, `users`, `cr_t`, `cr_c`, `uplift`.
+        tables: [promo_campaign]
+        starter: |
+          WITH s AS (
+            SELECT *,
+                   CASE
+                     WHEN orders_prev_90d = 0 THEN 'new'
+                     WHEN days_since_last_order > 30 THEN 'sleeping'
+                     WHEN orders_prev_90d >= 5 THEN 'loyal'
+                     ELSE 'regular'
+                   END AS segment
+            FROM promo_campaign
+          )
+          SELECT segment, COUNT(*) AS users
+          FROM s
+          GROUP BY segment
+        solution: |
+          WITH s AS (
+            SELECT *,
+                   CASE
+                     WHEN orders_prev_90d = 0 THEN 'new'
+                     WHEN days_since_last_order > 30 THEN 'sleeping'
+                     WHEN orders_prev_90d >= 5 THEN 'loyal'
+                     ELSE 'regular'
+                   END AS segment
+            FROM promo_campaign
+          )
+          SELECT segment, COUNT(*) AS users,
+                 AVG(converted) FILTER (WHERE treatment = 1) AS cr_t,
+                 AVG(converted) FILTER (WHERE treatment = 0) AS cr_c,
+                 AVG(converted) FILTER (WHERE treatment = 1) - AVG(converted) FILTER (WHERE treatment = 0) AS uplift
+          FROM s
+          GROUP BY segment
+        explain: |
+          Промокод сильнее всего работает на «спящих» клиентах. У лояльных высокая конверсия и без него, а uplift около нуля или даже отрицательный — это sure things (и, возможно, sleeping dogs). Рассылать промокод лояльным — дарить маржу.
+      - type: single
+        q: Маркетинг предлагает отправить промокод 20% клиентов с **самой высокой вероятностью покупки**. В чём проблема?
+        options:
+          - Проблем нет — они точно купят
+          - Это в основном sure things — купили бы и без промокода, и скидка лишь уменьшит маржу
+          - Нужно брать 50%, а не 20%
+          - Вероятность покупки нельзя предсказать
+        answer: 1
+        explain: Для решения «кому дать скидку» важен прирост вероятности от скидки (uplift), а не сама вероятность.
+      - type: single
+        q: Кто такие **sleeping dogs** в uplift-моделировании?
+        options:
+          - Клиенты, которые давно не заходили
+          - Клиенты, которые купили бы без воздействия, но из-за воздействия — не купят (например, рассылка напоминает им отписаться)
+          - Клиенты, которые не реагируют ни на что
+          - Новые клиенты
+        answer: 1
+        explain: Для них uplift отрицательный. Воздействие на них приносит прямой вред, а не просто трату денег.
+      - type: python
+        q: |
+          Построй **T-learner** на `promo_campaign`: две `LogisticRegression(max_iter=1000)` — на клиентах с `treatment = 1` и с `treatment = 0` — по признакам `orders_prev_90d`, `days_since_last_order`, `avg_check`. Предскажи uplift для всех клиентов (разница вероятностей), возьми **30% с наибольшим предсказанным uplift** (`>= np.quantile(uplift, 0.7)`) и посчитай среди них фактический uplift (конверсия treatment − конверсия control). Положи его в `result`.
+        tables: [promo_campaign]
+        packages: [scikit-learn]
+        starter: |
+          from sklearn.linear_model import LogisticRegression
+
+          feats = ['orders_prev_90d', 'days_since_last_order', 'avg_check']
+          df = promo_campaign
+          t, c = df[df['treatment'] == 1], df[df['treatment'] == 0]
+
+          result = ...
+        solution: |
+          from sklearn.linear_model import LogisticRegression
+
+          feats = ['orders_prev_90d', 'days_since_last_order', 'avg_check']
+          df = promo_campaign
+          t, c = df[df['treatment'] == 1], df[df['treatment'] == 0]
+          m1 = LogisticRegression(max_iter=1000).fit(t[feats], t['converted'])
+          m0 = LogisticRegression(max_iter=1000).fit(c[feats], c['converted'])
+          uplift = m1.predict_proba(df[feats])[:, 1] - m0.predict_proba(df[feats])[:, 1]
+          top = df[uplift >= np.quantile(uplift, 0.7)]
+          result = top.loc[top['treatment'] == 1, 'converted'].mean() - top.loc[top['treatment'] == 0, 'converted'].mean()
+        test: |
+          overall = promo_campaign.loc[promo_campaign.treatment == 1, 'converted'].mean() - promo_campaign.loc[promo_campaign.treatment == 0, 'converted'].mean()
+          assert abs(float(result) - float(expected)) < 0.015, f'Получено {float(result):.4f}, ожидалось ≈ {float(expected):.4f}'
+          assert float(result) > overall, 'Uplift в топе должен быть выше среднего — проверь, что сортируешь по предсказанному uplift'
+        explain: |
+          Uplift в отобранной трети заметно выше среднего по всей базе. Значит, промокод можно рассылать в разы меньшему числу клиентов почти с тем же числом дополнительных заказов. Оценка честная, потому что назначение промокода было случайным: внутри топа treatment и control сравнимы. Логистическая регрессия с линейными признаками плохо ловит нелинейный эффект «спящих» — бустинг или сегментный подход дадут больше.

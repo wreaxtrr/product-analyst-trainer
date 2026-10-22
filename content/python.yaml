@@ -1,0 +1,381 @@
+branch: python
+title: Python для аналитика
+color: "#89ddff"
+nodes:
+
+  - id: py.pandas
+    title: "pandas: фильтры, группировки, merge"
+    summary: Те же запросы, что в SQL, но в DataFrame — и типичные ловушки pandas.
+    theory: |
+      Python в этом тренажёре работает прямо в браузере (Pyodide). Все таблицы «Корзинки» уже загружены как DataFrame с теми же именами: `users`, `orders`, `events`, `items`, `experiment_users`, `marketing_spend`, `churn_features`, `promo_campaign`, плюс `daily_orders` — заказы и выручка по дням. Первый запуск занимает 10–20 секунд: загружается интерпретатор.
+
+      Ответ в задачах кладётся в переменную `result`. Проверка сравнивает его с эталоном по значениям: названия колонок и индекс не важны, порядок колонок — важен.
+
+      ## SQL → pandas
+
+      | SQL | pandas |
+      |---|---|
+      | `WHERE status = 'delivered'` | `orders[orders['status'] == 'delivered']` |
+      | `WHERE a AND b` | `df[(cond_a) & (cond_b)]` — скобки обязательны |
+      | `GROUP BY city` + агрегаты | `df.groupby('city').agg(users=('user_id', 'nunique'), rev=('revenue', 'sum'))` |
+      | `COUNT(DISTINCT x)` | `nunique()` |
+      | `LEFT JOIN` | `a.merge(b, on='user_id', how='left')` |
+      | `ORDER BY x DESC LIMIT 5` | `df.sort_values('x', ascending=False).head(5)` |
+      | `CASE WHEN` | `np.where(cond, a, b)` или `np.select([...], [...], default)` |
+      | оконная функция | `df.groupby('user_id')['ts'].shift()`, `.rank()`, `.cumsum()` |
+
+      ## Именованные агрегаты
+
+      ```python
+      by_city = (
+          orders.merge(users, on='user_id')
+                .query("status == 'delivered'")
+                .groupby('city', as_index=False)
+                .agg(orders=('order_id', 'count'),
+                     buyers=('user_id', 'nunique'),
+                     revenue=('revenue', 'sum'))
+      )
+      ```
+
+      Цепочка методов в скобках читается как SQL-запрос сверху вниз — так легче отлаживать, чем серию промежуточных переменных.
+
+      ## Даты
+
+      Колонки с датами уже приведены к `datetime64`. Полезное:
+
+      - `orders['ts'].dt.date`, `.dt.normalize()` — день; `.dt.to_period('M')` — месяц;
+      - `.dt.dayofweek` — день недели (0 — понедельник), `.dt.hour` — час;
+      - `(a - b).dt.days` — разница в днях.
+
+      ## Ловушки
+
+      > [!warn] merge размножает строки
+      > Как и JOIN в SQL. Используй `validate='many_to_one'` — pandas сам упадёт, если справа ключ не уникален: `orders.merge(users, on='user_id', validate='many_to_one')`.
+
+      - **NaN в groupby.** По умолчанию строки с NaN в ключе группировки **выбрасываются**. Нужна группа для пропусков — `groupby(..., dropna=False)` или `fillna('none')`.
+      - **`and` вместо `&`.** `df[a > 1 and b < 2]` упадёт. Нужно `df[(a > 1) & (b < 2)]`.
+      - **SettingWithCopyWarning.** Изменяешь срез — сначала `.copy()`.
+      - **apply со строками** медленный. Почти всё делается векторно: `np.where`, `.str`, `.dt`, `groupby().transform()`.
+
+      > [!interview]
+      > На лайвкодинге по pandas чаще всего просят: группировку с несколькими агрегатами, merge с проверкой дублей, `pivot_table` и «для каждого пользователя первое/последнее событие» через `groupby().first()` или `sort_values + drop_duplicates`.
+    sources:
+      - title: pandas — comparison with SQL
+        url: https://pandas.pydata.org/docs/getting_started/comparison/comparison_with_sql.html
+      - title: "Modern pandas (Tom Augspurger)"
+        url: https://tomaugspurger.net/posts/modern-1-intro/
+    tasks:
+      - type: python
+        q: |
+          Посчитай долю заказов каждого статуса (от 0 до 1). Положи в `result` Series или DataFrame со статусом и долей.
+        tables: [orders]
+        starter: |
+          result = orders['status']
+        solution: |
+          result = orders['status'].value_counts(normalize=True)
+        ordered: false
+        explain: '`value_counts(normalize=True)` сразу даёт доли. Эквивалент — `orders.groupby(''status'').size() / len(orders)`.'
+      - type: python
+        q: |
+          Для каждого города посчитай число пользователей и долю пользователей iOS. Результат — DataFrame с колонками `city`, `users`, `ios_share` (в таком порядке).
+        tables: [users]
+        starter: |
+          result = (
+              users.assign(is_ios=users['platform'] == 'ios')
+                   .groupby('city', as_index=False)
+                   .agg(users=('user_id', 'count'))
+          )
+        solution: |
+          result = (
+              users.assign(is_ios=users['platform'] == 'ios')
+                   .groupby('city', as_index=False)
+                   .agg(users=('user_id', 'count'), ios_share=('is_ios', 'mean'))
+          )
+        ordered: false
+        explain: Среднее от булевой колонки — доля True, ровно как AVG(CASE WHEN ...) в SQL.
+      - type: python
+        q: |
+          Посчитай выручку **доставленных** заказов по платформам. Результат — DataFrame `platform`, `revenue`.
+        tables: [orders, users]
+        starter: |
+          delivered = orders[orders['status'] == 'delivered']
+          result = delivered
+        solution: |
+          delivered = orders[orders['status'] == 'delivered']
+          result = (
+              delivered.merge(users[['user_id', 'platform']], on='user_id', how='left', validate='many_to_one')
+                       .groupby('platform', as_index=False)['revenue'].sum()
+          )
+        ordered: false
+        explain: Берём из users только нужные колонки — merge быстрее, а результат чище. `validate='many_to_one'` гарантирует, что заказы не размножились.
+      - type: single
+        q: |
+          Аналитик пишет `orders.merge(events, on='user_id')`, чтобы посчитать выручку пользователей, у которых было событие `checkout`. Что пойдёт не так?
+        options:
+          - Ничего, merge сам удалит дубли
+          - Каждый заказ повторится столько раз, сколько у пользователя событий — сумма выручки будет завышена
+          - merge не работает по колонке user_id
+          - Потеряются заказы без событий, а это не страшно
+        answer: 1
+        explain: 'Сначала выдели уникальных пользователей с checkout: `ids = events.loc[events.event_name == ''checkout'', ''user_id''].unique()`, а потом отфильтруй `orders[orders.user_id.isin(ids)]`.'
+      - type: python
+        q: |
+          Построй таблицу числа заказов по платформам и статусам. Результат — DataFrame с колонками строго в порядке `platform`, `delivered`, `cancelled` (одна строка на платформу).
+        tables: [orders, users]
+        starter: |
+          df = orders.merge(users[['user_id', 'platform']], on='user_id')
+          result = pd.crosstab(df['platform'], df['status'])
+        solution: |
+          df = orders.merge(users[['user_id', 'platform']], on='user_id')
+          result = pd.crosstab(df['platform'], df['status'])[['delivered', 'cancelled']].reset_index()
+        ordered: false
+        explain: '`pd.crosstab` — частный случай `pivot_table` для подсчёта. Порядок колонок задаётся явным списком. То же через pivot_table: `df.pivot_table(index=''platform'', columns=''status'', values=''order_id'', aggfunc=''count'')`.'
+
+  - id: py.cohorts
+    title: Когорты и retention в pandas
+    summary: Когортная таблица за десять строк кода и задача про повторный заказ.
+    theory: |
+      Когортный анализ в pandas строится в четыре шага.
+
+      ```python
+      # 1. Активность: уникальные пары (пользователь, месяц)
+      act = events.assign(month=events['ts'].dt.to_period('M'))[['user_id', 'month']].drop_duplicates()
+
+      # 2. Когорта пользователя
+      coh = users.assign(cohort=users['signup_date'].dt.to_period('M'))[['user_id', 'cohort']]
+
+      # 3. Номер периода жизни
+      df = act.merge(coh, on='user_id')
+      df['period'] = (df['month'] - df['cohort']).apply(lambda x: x.n)
+
+      # 4. Матрица: доля активных от размера когорты
+      counts = df.pivot_table(index='cohort', columns='period', values='user_id', aggfunc='nunique')
+      sizes = coh.groupby('cohort').size()
+      retention = counts.div(sizes, axis=0)
+      ```
+
+      `Period` в pandas удобен для месяцев: разность двух периодов — смещение, у которого `.n` — число месяцев. Альтернатива без Period — арифметика с номерами месяцев: `year * 12 + month`.
+
+      ## Календарные периоды или дни жизни
+
+      В таблице выше **M1** — следующий **календарный** месяц после месяца регистрации. Пользователь, зарегистрированный 31 января, попадёт в M1 уже 1 февраля, а зарегистрированный 1 января — только через месяц. Для точного сравнения когорт используют **дни жизни**: недели 0, 1, 2… от даты регистрации (`(ts - signup_date).dt.days // 7`).
+
+      ## Визуализация
+
+      Когортную таблицу рисуют как heatmap: `retention.style.background_gradient(axis=None)` в Jupyter или `seaborn.heatmap`. Кривые удержания когорт — `retention.T.plot()`.
+
+      ## Повторная покупка
+
+      Для доставки и e-commerce одна из ключевых метрик — **доля покупателей, сделавших второй заказ** в течение N дней после первого. Это ранний индикатор удержания: известен уже через месяц, а не через полгода.
+
+      ```python
+      o = orders.sort_values(['user_id', 'ts'])
+      o['n'] = o.groupby('user_id').cumcount()          # номер заказа пользователя
+      first = o[o['n'] == 0].set_index('user_id')['ts']
+      second = o[o['n'] == 1].set_index('user_id')['ts']
+      gap = (second - first.reindex(second.index)).dt.days
+      ```
+
+      > [!tip]
+      > `groupby().cumcount()`, `groupby().shift()` и `groupby().transform('min')` — три метода, которые закрывают почти все задачи «для каждого пользователя относительно его же истории».
+    sources:
+      - title: pandas — time series / Period
+        url: https://pandas.pydata.org/docs/user_guide/timeseries.html#time-span-representation
+      - title: pandas — pivot_table
+        url: https://pandas.pydata.org/docs/reference/api/pandas.pivot_table.html
+    tasks:
+      - type: python
+        q: |
+          Посчитай **retention M1** по месячным когортам регистрации: доля пользователей когорты, у которых есть хотя бы одно событие в следующем календарном месяце после месяца регистрации. Результат — DataFrame с колонками `cohort` (строка вида `'2024-01'`), `users`, `m1`, отсортированный по когорте.
+        tables: [users, events]
+        starter: |
+          act = events.assign(month=events['ts'].dt.to_period('M'))[['user_id', 'month']].drop_duplicates()
+          coh = users.assign(cohort=users['signup_date'].dt.to_period('M'))[['user_id', 'cohort']]
+          df = act.merge(coh, on='user_id')
+          df['period'] = (df['month'] - df['cohort']).apply(lambda x: x.n)
+
+          result = ...
+        solution: |
+          act = events.assign(month=events['ts'].dt.to_period('M'))[['user_id', 'month']].drop_duplicates()
+          coh = users.assign(cohort=users['signup_date'].dt.to_period('M'))[['user_id', 'cohort']]
+          df = act.merge(coh, on='user_id')
+          df['period'] = (df['month'] - df['cohort']).apply(lambda x: x.n)
+
+          sizes = coh.groupby('cohort').size().rename('users')
+          m1 = df[df['period'] == 1].groupby('cohort')['user_id'].nunique().rename('m1_users')
+          result = pd.concat([sizes, m1], axis=1).fillna(0).reset_index()
+          result['m1'] = result['m1_users'] / result['users']
+          result['cohort'] = result['cohort'].astype(str)
+          result = result[['cohort', 'users', 'm1']].sort_values('cohort')
+        explain: |
+          Ключевые места — делить на размер **всей** когорты (а не только активных), а когорты без активности в M1 заполнить нулём. M1 у всех когорт держится около 50%: продукт не становится ни лучше, ни хуже для новых пользователей. Но помни, что «календарный» M1 у пришедших в конце месяца наступает уже через несколько дней — это сглаживает различия.
+      - type: python
+        q: |
+          Построй полную **матрицу retention**: строки — когорты регистрации (строки `'2024-01'` … `'2024-06'`, по порядку), колонки — номера месяцев 0, 1, …, 6, значения — доли активных от размера когорты, NaN — где месяц ещё не наступил. Положи матрицу в `result` (когорта — в индексе или первой колонкой).
+        tables: [users, events]
+        starter: |
+          act = events.assign(month=events['ts'].dt.to_period('M'))[['user_id', 'month']].drop_duplicates()
+          coh = users.assign(cohort=users['signup_date'].dt.to_period('M'))[['user_id', 'cohort']]
+          df = act.merge(coh, on='user_id')
+          df['period'] = (df['month'] - df['cohort']).apply(lambda x: x.n)
+
+          result = ...
+        solution: |
+          act = events.assign(month=events['ts'].dt.to_period('M'))[['user_id', 'month']].drop_duplicates()
+          coh = users.assign(cohort=users['signup_date'].dt.to_period('M'))[['user_id', 'cohort']]
+          df = act.merge(coh, on='user_id')
+          df['period'] = (df['month'] - df['cohort']).apply(lambda x: x.n)
+
+          counts = df.pivot_table(index='cohort', columns='period', values='user_id', aggfunc='nunique')
+          sizes = coh.groupby('cohort').size()
+          result = counts.div(sizes, axis=0)
+          result.index = result.index.astype(str)
+          result = result.reindex(columns=range(7))
+        explain: |
+          В M0 почти 100% — в месяц регистрации человек, по определению, был активен хотя бы раз. Чтение по столбцу показывает, становится ли продукт лучше для новых когорт. Июньская когорта видит только M0 и M1, поэтому дальше NaN.
+      - type: single
+        q: Зачем в когортном анализе часто переходят от календарных месяцев к **неделям жизни** пользователя?
+        options:
+          - Так меньше строк в таблице
+          - В календарном M1 «возраст» пользователя разный — от 1 до 60 дней, в зависимости от даты регистрации; недели жизни выравнивают когорты
+          - Календарные месяцы нельзя посчитать в pandas
+          - Так retention получается выше
+        answer: 1
+        explain: Пришедший 31 января попадает в M1 на следующий день, пришедший 1 января — через месяц. При сравнении когорт с разным распределением дат регистрации это искажает картину.
+      - type: python
+        q: |
+          Какая доля покупателей сделала **второй заказ** (любой статус) в течение **30 дней** после первого (разница `ts` второго и первого заказа не больше 30 суток: `<= pd.Timedelta(days=30)`)? В знаменателе — все пользователи хотя бы с одним заказом. Положи долю (число от 0 до 1) в `result`.
+        tables: [orders]
+        starter: |
+          o = orders.sort_values(['user_id', 'ts'])
+          o['n'] = o.groupby('user_id').cumcount()
+
+          result = ...
+        solution: |
+          o = orders.sort_values(['user_id', 'ts', 'order_id'])
+          o['n'] = o.groupby('user_id').cumcount()
+          first = o[o['n'] == 0].set_index('user_id')['ts']
+          second = o[o['n'] == 1].set_index('user_id')['ts']
+          gap = second - first.reindex(second.index)
+          result = (gap <= pd.Timedelta(days=30)).sum() / len(first)
+        explain: Знаменатель — все покупатели (`len(first)`), а не только те, у кого есть второй заказ. Это ранний индикатор удержания, который можно считать уже через месяц после старта когорты.
+
+  - id: py.stats
+    title: Статистика в Python
+    summary: scipy.stats для t-теста, хи-квадрата и бутстрапа на настоящих данных эксперимента.
+    theory: |
+      ## Нужные функции
+
+      | Задача | Функция |
+      |---|---|
+      | t-тест Уэлча | `scipy.stats.ttest_ind(a, b, equal_var=False)` |
+      | z-тест для долей | `statsmodels.stats.proportion.proportions_ztest(count, nobs)` или руками |
+      | Хи-квадрат согласия (SRM) | `scipy.stats.chisquare([n_a, n_b])` |
+      | Таблица сопряжённости | `scipy.stats.chi2_contingency(table)` |
+      | Манн–Уитни | `scipy.stats.mannwhitneyu(a, b)` |
+      | Квантили нормального распределения | `scipy.stats.norm.ppf(0.975)` → 1.96 |
+      | Бутстрап | `scipy.stats.bootstrap` или руками через `numpy` |
+
+      ## Данные эксперимента в одну таблицу «пользователь — метрика»
+
+      Первое, что делается при анализе теста в Python — свести всё к одной строке на единицу рандомизации:
+
+      ```python
+      eu = experiment_users[experiment_users['experiment'] == 'new_checkout']
+      d = orders[orders['status'] == 'delivered'].merge(eu[['user_id', 'assigned_at']], on='user_id')
+      d = d[(d['ts'] >= d['assigned_at']) & (d['ts'] < '2024-07-01')]
+      rev = d.groupby('user_id')['revenue'].sum()
+      eu = eu.assign(revenue=eu['user_id'].map(rev).fillna(0))
+      ```
+
+      Пользователи без заказов получают 0 через `fillna(0)`. Это важно: если их потерять, ты сравнишь выручку **покупателей**, а не участников.
+
+      ## Бутстрап руками
+
+      ```python
+      rng = np.random.default_rng(42)
+      x = a.to_numpy()
+      boots = np.array([np.median(rng.choice(x, size=len(x), replace=True)) for _ in range(2000)])
+      low, high = np.percentile(boots, [2.5, 97.5])
+      ```
+
+      Для разницы между группами ресемпли **каждую группу отдельно** и бери разницу статистик.
+
+      > [!tip]
+      > Фиксируй seed генератора (`default_rng(42)`): результат анализа должен воспроизводиться у коллеги.
+    sources:
+      - title: SciPy — scipy.stats
+        url: https://docs.scipy.org/doc/scipy/reference/stats.html
+      - title: SciPy — bootstrap
+        url: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html
+    tasks:
+      - type: python
+        q: |
+          Для эксперимента **new_checkout** посчитай выручку доставленных заказов на участника (с `assigned_at` до 30 июня включительно, то есть `ts < '2024-07-01'`; без заказов — 0) и сравни группы **t-тестом Уэлча**. Положи в `result` p-value.
+        tables: [experiment_users, orders]
+        packages: [scipy]
+        starter: |
+          from scipy import stats
+
+          eu = experiment_users[experiment_users['experiment'] == 'new_checkout']
+          d = orders[orders['status'] == 'delivered'].merge(eu[['user_id', 'assigned_at']], on='user_id')
+          d = d[(d['ts'] >= d['assigned_at']) & (d['ts'] < '2024-07-01')]
+
+          result = ...
+        solution: |
+          from scipy import stats
+
+          eu = experiment_users[experiment_users['experiment'] == 'new_checkout']
+          d = orders[orders['status'] == 'delivered'].merge(eu[['user_id', 'assigned_at']], on='user_id')
+          d = d[(d['ts'] >= d['assigned_at']) & (d['ts'] < '2024-07-01')]
+          rev = d.groupby('user_id')['revenue'].sum()
+          eu = eu.assign(revenue=eu['user_id'].map(rev).fillna(0))
+          a = eu.loc[eu['grp'] == 'A', 'revenue']
+          b = eu.loc[eu['grp'] == 'B', 'revenue']
+          result = stats.ttest_ind(b, a, equal_var=False).pvalue
+        explain: p-value двусторонний, поэтому не зависит от порядка групп. Без `fillna(0)` ты бы сравнивал выручку только покупателей — совсем другой вопрос.
+      - type: python
+        q: |
+          Проверь на SRM эксперимент **promo_banner** (сплит 50/50) с помощью `scipy.stats.chisquare`. Положи в `result` p-value.
+        tables: [experiment_users]
+        packages: [scipy]
+        starter: |
+          from scipy import stats
+
+          result = ...
+        solution: |
+          from scipy import stats
+
+          counts = experiment_users.loc[experiment_users['experiment'] == 'promo_banner', 'grp'].value_counts().sort_index()
+          result = stats.chisquare(counts.values).pvalue
+        explain: По умолчанию `chisquare` сравнивает с равномерным ожиданием — это и есть сплит 50/50. Для 90/10 передай `f_exp=[0.9 * n, 0.1 * n]`. p-value заметно меньше 0.001 — SRM.
+      - type: python
+        q: |
+          Построй **бутстрап 95% доверительный интервал для медианы** выручки доставленных заказов **июня 2024**: 2 000 ресемплов с возвращением, генератор `np.random.default_rng(42)`, перцентильный интервал. Положи в `result` кортеж `(low, high)`.
+        tables: [orders]
+        starter: |
+          x = orders.loc[(orders['status'] == 'delivered') & (orders['ts'] >= '2024-06-01') & (orders['ts'] < '2024-07-01'), 'revenue'].to_numpy()
+          rng = np.random.default_rng(42)
+
+          result = ...
+        solution: |
+          x = orders.loc[(orders['status'] == 'delivered') & (orders['ts'] >= '2024-06-01') & (orders['ts'] < '2024-07-01'), 'revenue'].to_numpy()
+          rng = np.random.default_rng(42)
+          boots = np.array([np.median(rng.choice(x, size=len(x), replace=True)) for _ in range(2000)])
+          result = tuple(np.percentile(boots, [2.5, 97.5]))
+        test: |
+          assert isinstance(result, (tuple, list, np.ndarray)) and len(result) == 2, 'result должен быть парой (low, high)'
+          lo, hi = float(result[0]), float(result[1])
+          e_lo, e_hi = float(expected[0]), float(expected[1])
+          assert lo < hi, 'Нижняя граница должна быть меньше верхней'
+          assert abs(lo - e_lo) / e_lo < 0.02 and abs(hi - e_hi) / e_hi < 0.02, f'Интервал ({lo:.1f}, {hi:.1f}) заметно отличается от ожидаемого ≈ ({e_lo:.1f}, {e_hi:.1f})'
+        explain: Бутстрап случаен, поэтому проверка допускает небольшое расхождение в зависимости от способа ресемплинга. Интервал для медианы узкий и симметричный — медиана устойчива к хвосту.
+      - type: multi
+        q: Какие пары «задача — функция» верны?
+        options:
+          - "SRM при сплите 50/50 — `scipy.stats.chisquare([n_a, n_b])`"
+          - "Сравнение средних с неравными дисперсиями — `ttest_ind(a, b, equal_var=False)`"
+          - "Квантиль 0.975 нормального распределения — `scipy.stats.norm.cdf(0.975)`"
+          - "Независимость двух категориальных признаков — `chi2_contingency(table)`"
+        answer: [0, 1, 3]
+        explain: Квантиль — это обратная функция распределения, `norm.ppf(0.975)` = 1.96. `norm.cdf(1.96)` даст 0.975.

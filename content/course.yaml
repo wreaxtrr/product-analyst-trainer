@@ -1,0 +1,70 @@
+# Структура курса: акты по порядку, внутри акта — треки (ветки), в конце акта — испытание.
+# Узлы описаны в content/<ветка>.yaml. Зависимости считаются автоматически (см. app/content.js).
+# side: true — боковая ветка: открывается испытанием прошлого акта ИЛИ уровнем level.
+title: Product Analyst Trainer
+scenarios: scenarios
+files: [sql, stats, metrics, unit, ab, python, ml, ds, causal, viz, product, interview, trials]
+acts:
+  - id: a1
+    title: Акт I — Фундамент
+    summary: SQL по продуктовым логам, выборочный шум и доверительные интервалы.
+    tracks:
+      - branch: sql
+        nodes: [sql.select, sql.agg, sql.joins]
+      - branch: stats
+        nodes: [stats.noise, stats.descr, stats.ci]
+    trial: trial.1
+
+  - id: a2
+    title: Акт II — Продукт и метрики
+    summary: Оконные функции, когорты, воронки, дерево метрик и юнит-экономика.
+    tracks:
+      - branch: sql
+        nodes: [sql.windows, sql.dates, sql.funnels]
+      - branch: metrics
+        nodes: [metrics.activity, metrics.retention, metrics.funnel, metrics.tree]
+      - branch: unit
+        nodes: [unit.revenue, unit.ltv]
+    trial: trial.2
+
+  - id: a3
+    title: Акт III — Эксперименты
+    summary: Проверка гипотез и A/B-тесты — от дизайна и мощности до CUPED и разбора на реальных данных.
+    tracks:
+      - branch: stats
+        nodes: [stats.hypo, stats.tests]
+      - branch: ab
+        nodes: [ab.design, ab.power, ab.srm, ab.peeking, ab.multiple, ab.ratio, ab.cuped, ab.analysis]
+    trial: trial.3
+
+  - id: a4
+    title: Акт IV — Python, ML и Data Science
+    summary: pandas и scipy, классический ML для аналитика и боковые ветки — DS-кейсы, причинность без A/B, визуализация.
+    tracks:
+      - branch: python
+        nodes: [py.pandas, py.cohorts, py.stats]
+      - branch: ml
+        nodes: [ml.framing, ml.linear, ml.metrics, ml.validation, ml.trees]
+      - branch: ds
+        side: true
+        level: 7
+        nodes: [ds.churn, ds.forecast, ds.uplift]
+      - branch: causal
+        side: true
+        level: 7
+        nodes: [causal.confounding, causal.did, causal.quasi]
+      - branch: viz
+        side: true
+        level: 5
+        nodes: [viz.charts, viz.dashboards]
+    trial: trial.4
+
+  - id: a5
+    title: Акт V — Аналитик целиком
+    summary: Разбор инцидентов, приоритизация, продуктовые кейсы и подготовка к собеседованию.
+    tracks:
+      - branch: product
+        nodes: [product.drop, product.prioritize, product.casestudy]
+      - branch: interview
+        nodes: [interview.sql, interview.stats]
+    trial: trial.5

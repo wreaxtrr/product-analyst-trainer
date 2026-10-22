@@ -1,0 +1,295 @@
+branch: interview
+title: Подготовка к собеседованию
+color: "#c792ea"
+nodes:
+
+  - id: interview.sql
+    title: "SQL-лайвкодинг: классика"
+    summary: Серии подряд, скользящий WAU, рост месяц к месяцу и другие задачи, которые дают на каждом втором собеседовании.
+    theory: |
+      На SQL-секции обычно 2–4 задачи на 30–45 минут. Оценивают не только правильность, но и то, **как** ты решаешь.
+
+      ## Как вести себя на лайвкодинге
+
+      1. **Повтори задачу своими словами** и уточни граничные случаи: «а если у пользователя нет заказов — он должен быть в результате с нулём?», «отменённые учитываем?».
+      2. **Проговори план** до кода: «сначала соберу уникальные дни активности пользователя, потом пронумерую их…».
+      3. **Пиши через CTE** — шаги видно, их легко проверять по одному.
+      4. **Проверь результат** на здравый смысл: число строк, порядок величины, нет ли дублей.
+
+      ## Шаблоны, которые стоит знать наизусть
+
+      | Задача | Приём |
+      |---|---|
+      | Первый/последний/N-й объект в группе | `ROW_NUMBER() OVER (PARTITION BY … ORDER BY …)` |
+      | Разница с предыдущим | `LAG()` |
+      | Серии подряд (gaps & islands) | `дата − ROW_NUMBER()` даёт одинаковое значение внутри серии |
+      | Скользящее окно по датам | самосоединение с календарём или `RANGE BETWEEN INTERVAL … PRECEDING` |
+      | Доля от итога | `x / SUM(x) OVER ()` |
+      | Пропущенные даты | `generate_series` + LEFT JOIN |
+      | Медиана | `percentile_cont(0.5) WITHIN GROUP (ORDER BY x)` (PostgreSQL) |
+
+      ## Gaps and islands
+
+      ```sql
+      WITH days AS (
+        SELECT DISTINCT user_id, ts::DATE AS d FROM orders
+      ),
+      grp AS (
+        SELECT user_id, d,
+               d - CAST(ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY d) AS INTEGER) AS island
+        FROM days
+      )
+      SELECT user_id, island, COUNT(*) AS streak
+      FROM grp
+      GROUP BY 1, 2
+      ```
+
+      Внутри серии подряд идущих дней и дата, и номер растут на 1, поэтому их разность постоянна — это и есть идентификатор серии.
+
+      > [!tip]
+      > Если застрял, напиши решение «в лоб» (пусть с подзапросом в SELECT), а потом предложи оптимизацию. Работающее решение лучше красивого незаконченного.
+    sources:
+      - title: "DataLemur: SQL interview questions"
+        url: https://datalemur.com/questions
+      - title: "LeetCode: Database problems"
+        url: https://leetcode.com/problemset/database/
+    tasks:
+      - type: sql
+        q: |
+          Сколько пользователей хотя бы раз делали **доставленные** заказы **3 календарных дня подряд** (или больше)? Одна колонка `users_cnt`.
+        tables: [orders]
+        starter: |
+          WITH days AS (
+            SELECT DISTINCT user_id, ts::DATE AS d
+            FROM orders
+            WHERE status = 'delivered'
+          )
+          SELECT
+        solution: |
+          WITH days AS (
+            SELECT DISTINCT user_id, ts::DATE AS d
+            FROM orders
+            WHERE status = 'delivered'
+          ),
+          grp AS (
+            SELECT user_id, d,
+                   d - CAST(ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY d) AS INTEGER) AS island
+            FROM days
+          ),
+          streaks AS (
+            SELECT user_id, island, COUNT(*) AS len
+            FROM grp
+            GROUP BY 1, 2
+          )
+          SELECT COUNT(DISTINCT user_id) AS users_cnt
+          FROM streaks
+          WHERE len >= 3
+        explain: Классический gaps and islands. Альтернатива — `LAG(d, 2)` и проверка, что `d − LAG(d, 2) = 2` (для уникальных дат это ровно три дня подряд).
+      - type: sql
+        q: |
+          Посчитай **скользящий WAU** — число уникальных пользователей с любым событием за 7 дней, заканчивающихся этой датой (включительно), — для каждого дня с 1 по 7 июля 2024. Колонки: `dt`, `wau`. Сортировка по дате.
+        tables: [events]
+        starter: |
+          WITH cal AS (
+            SELECT CAST(generate_series AS DATE) AS dt
+            FROM generate_series(DATE '2024-07-01', DATE '2024-07-07', INTERVAL 1 DAY)
+          ),
+          act AS (
+            SELECT DISTINCT user_id, ts::DATE AS d FROM events
+          )
+          SELECT
+        solution: |
+          WITH cal AS (
+            SELECT CAST(generate_series AS DATE) AS dt
+            FROM generate_series(DATE '2024-07-01', DATE '2024-07-07', INTERVAL 1 DAY)
+          ),
+          act AS (
+            SELECT DISTINCT user_id, ts::DATE AS d FROM events
+          )
+          SELECT c.dt, COUNT(DISTINCT a.user_id) AS wau
+          FROM cal c
+          JOIN act a ON a.d BETWEEN c.dt - 6 AND c.dt
+          GROUP BY c.dt
+          ORDER BY c.dt
+        ordered: true
+        explain: Оконная функция `COUNT(DISTINCT) OVER (RANGE …)` в большинстве СУБД не поддерживается, поэтому скользящие уникальные считают самосоединением с календарём. На больших данных — через HyperLogLog-скетчи.
+      - type: sql
+        q: |
+          Посчитай **рост выручки месяц к месяцу** (доставленные заказы): колонки `month` (DATE), `revenue`, `mom_growth` (revenue / выручка прошлого месяца − 1; для первого месяца — NULL). Сортировка по месяцу.
+        tables: [orders]
+        starter: |
+          WITH m AS (
+            SELECT date_trunc('month', ts)::DATE AS month, SUM(revenue) AS revenue
+            FROM orders
+            WHERE status = 'delivered'
+            GROUP BY 1
+          )
+          SELECT
+        solution: |
+          WITH m AS (
+            SELECT date_trunc('month', ts)::DATE AS month, SUM(revenue) AS revenue
+            FROM orders
+            WHERE status = 'delivered'
+            GROUP BY 1
+          )
+          SELECT month, revenue,
+                 revenue / LAG(revenue) OVER (ORDER BY month) - 1 AS mom_growth
+          FROM m
+          ORDER BY month
+        ordered: true
+        explain: Рост в начале огромный, потому что продукт стартовал с нуля. Для молодого продукта темпы роста MoM почти всегда падают — это нормально, сравнивать надо абсолютные приросты.
+      - type: sql
+        q: |
+          Для каждой платформы найди **самую популярную категорию** по числу добавлений в корзину (`add_to_cart`). Колонки: `platform`, `category`, `carts`.
+        tables: [events, users, items]
+        starter: |
+          WITH c AS (
+            SELECT u.platform, i.category, COUNT(*) AS carts
+            FROM events e
+            JOIN users u USING (user_id)
+            JOIN items i ON i.item_id = e.item_id
+            WHERE e.event_name = 'add_to_cart'
+            GROUP BY 1, 2
+          )
+          SELECT
+        solution: |
+          WITH c AS (
+            SELECT u.platform, i.category, COUNT(*) AS carts
+            FROM events e
+            JOIN users u USING (user_id)
+            JOIN items i ON i.item_id = e.item_id
+            WHERE e.event_name = 'add_to_cart'
+            GROUP BY 1, 2
+          )
+          SELECT platform, category, carts
+          FROM c
+          QUALIFY ROW_NUMBER() OVER (PARTITION BY platform ORDER BY carts DESC, category) = 1
+        explain: Топ-1 в группе. В PostgreSQL без QUALIFY — подзапрос с `WHERE rn = 1` или `DISTINCT ON (platform) ... ORDER BY platform, carts DESC`.
+      - type: sql
+        q: |
+          Сколько пользователей **первый** заказ которых был отменён (`cancelled`) и которые **больше не сделали ни одного заказа**? Одна колонка `users_cnt`.
+        tables: [orders]
+        starter: |
+          WITH o AS (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts, order_id) AS rn,
+                   COUNT(*) OVER (PARTITION BY user_id) AS total
+            FROM orders
+          )
+          SELECT
+        solution: |
+          WITH o AS (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts, order_id) AS rn,
+                   COUNT(*) OVER (PARTITION BY user_id) AS total
+            FROM orders
+          )
+          SELECT COUNT(*) AS users_cnt
+          FROM o
+          WHERE rn = 1 AND status = 'cancelled' AND total = 1
+        explain: Окна позволяют в одном проходе получить и номер заказа, и общее число заказов пользователя. Продуктовый смысл — плохой первый опыт. Сравни долю повторных заказов у тех, чей первый заказ отменён, и у остальных.
+      - type: sql
+        q: |
+          Сколько **новых покупателей** (первый заказ любого статуса) появлялось каждый день с 3 по 9 июня 2024 включительно? Колонки: `dt`, `new_buyers`. Сортировка по дате.
+        tables: [orders]
+        starter: |
+          WITH first AS (
+            SELECT user_id, MIN(ts)::DATE AS dt
+            FROM orders
+            GROUP BY user_id
+          )
+          SELECT
+        solution: |
+          WITH first AS (
+            SELECT user_id, MIN(ts)::DATE AS dt
+            FROM orders
+            GROUP BY user_id
+          )
+          SELECT dt, COUNT(*) AS new_buyers
+          FROM first
+          WHERE dt BETWEEN '2024-06-03' AND '2024-06-09'
+          GROUP BY dt
+          ORDER BY dt
+        ordered: true
+        explain: Фильтр по дате — **после** нахождения первого заказа. Если отфильтровать заказы по датам до MIN, «новыми» окажутся все, кто заказывал в эту неделю.
+
+  - id: interview.stats
+    title: "Статистика: блиц"
+    summary: Короткие вопросы, которые задают в первые 15 минут технического интервью.
+    theory: |
+      Блиц по статистике проверяет, что базовые понятия ты знаешь «на автомате». Отвечай коротко и точно, а если вопрос с подвохом — назови подвох.
+
+      ## Шпаргалка
+
+      | Вопрос | Короткий ответ |
+      |---|---|
+      | p-value | вероятность увидеть такой или более экстремальный результат, если H₀ верна |
+      | Мощность | вероятность отвергнуть H₀, когда эффект есть (1 − β) |
+      | Ошибка I рода | ложная победа (α) |
+      | Ошибка II рода | пропуск реального эффекта (β) |
+      | Доверительный интервал 95% | метод, который накрывает истину в 95% повторений |
+      | ЦПТ | среднее большого числа независимых наблюдений распределено примерно нормально |
+      | Дисперсия Бернулли | p(1 − p) |
+      | Размер выборки для двух долей | ≈ 16·p(1 − p) / Δ² на группу (α = 0.05, мощность 80%) |
+      | SRM | несоответствие размеров групп ожидаемому сплиту; анализировать тест нельзя |
+      | Подглядывание | многократная проверка с остановкой → ложных побед больше α |
+      | Ratio-метрика | отношение сумм; дисперсия — дельта-методом или бутстрапом по пользователям |
+      | CUPED | вычитание предсказуемой по предпериоду части; дисперсия × (1 − ρ²) |
+
+      Правило «16·σ²/Δ²» — удобная запоминалка Лера: при α = 0.05 и мощности 80% множитель $2 \cdot (1.96 + 0.84)^2 \approx 15.7$.
+
+      > [!interview]
+      > На вопрос с подвохом лучший ответ — назвать подвох: «Ответ зависит от того, независимы ли наблюдения…». Это показывает понимание, а не заученные определения.
+    sources:
+      - title: "Evan Miller: Lessons learned from A/B tests"
+        url: https://www.evanmiller.org/ab-testing/
+    tasks:
+      - type: number
+        q: По правилу Лера (16·p(1 − p) / Δ² на группу) — сколько пользователей нужно в группу, чтобы заметить изменение конверсии с 20% на 21%?
+        answer: 25600
+        tol: 0.01
+        explain: 16 · 0.2 · 0.8 / 0.01² = 25 600. Точная формула даст чуть больше (≈ 25 580 с учётом p₂), порядок тот же.
+      - type: single
+        q: Ты подбросил монету 10 раз, выпало 8 орлов. Монета нечестная?
+        options:
+          - Да, 80% — явно больше 50%
+          - Нельзя уверенно сказать — двусторонний p-value биномиального теста ≈ 0.11, то есть такое случается и с честной монетой
+          - Нет, монеты всегда честные
+          - Да, p-value = 0.2
+        answer: 1
+        explain: P(≥ 8 или ≤ 2 орлов) = 2 · (45 + 10 + 1) / 1024 ≈ 0.109. На 10 бросках мощности мало.
+      - type: single
+        q: Метрика выросла в тесте на 2%, 95% ДИ эффекта — от −1% до +5%. Что это значит?
+        options:
+          - Эффект есть и равен 2%
+          - Данные совместимы как с небольшим падением, так и с заметным ростом — значимого эффекта на уровне 5% нет
+          - Эффекта точно нет
+          - Нужно сузить интервал до 90%, чтобы он стал значимым
+        answer: 1
+        explain: Интервал включает ноль — значимости нет. Подгонять уровень доверия под желаемый результат нельзя.
+      - type: multi
+        q: Что увеличивает мощность теста?
+        options:
+          - Больше пользователей
+          - Снижение дисперсии метрики (CUPED, винзоризация)
+          - Больший истинный эффект
+          - Уменьшение α с 0.05 до 0.01
+          - Более чувствительная метрика, ближе к изменению
+        answer: [0, 1, 2, 4]
+        explain: Более строгий α уменьшает мощность — порог значимости становится выше.
+      - type: single
+        q: В A/A-тесте с 20 метриками одна показала p = 0.03. Что это скорее всего?
+        options:
+          - Баг в платформе экспериментов
+          - Ожидаемая случайность — при 20 метриках одна значимая на уровне 0.05 встречается в среднем в каждом тесте
+          - Реальный эффект
+          - Ошибка II рода
+        answer: 1
+        explain: Ожидаемое число ложных значимостей — 20 · 0.05 = 1. Тревожно, если таких метрик систематически много или p-value распределены неравномерно на множестве A/A-тестов.
+      - type: single
+        q: Ковариация двух метрик положительна. Что можно сказать о корреляции?
+        options:
+          - Она равна ковариации
+          - Она тоже положительна, по модулю не больше 1
+          - Она может быть отрицательной
+          - Ничего нельзя сказать
+        answer: 1
+        explain: Корреляция — ковариация, нормированная на произведение стандартных отклонений (они положительны), поэтому знак совпадает.

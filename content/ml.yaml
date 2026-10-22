@@ -1,0 +1,585 @@
+branch: ml
+title: ML для аналитика
+color: "#f07178"
+nodes:
+
+  - id: ml.framing
+    title: Постановка ML-задачи и утечки
+    summary: Что предсказываем, на момент какого времени, по каким данным — и как модель «подсматривает» ответ.
+    theory: |
+      От продуктового аналитика редко ждут state-of-the-art моделей. Ждут другого: правильно **поставить задачу**, собрать честный датасет, построить разумный бейзлайн и перевести качество модели в деньги. Половина провалов ML-проектов — ошибки постановки, а не алгоритма.
+
+      ## Чек-лист постановки
+
+      1. **Бизнес-решение.** Что будет сделано с предсказанием? «Отправим скидку тем, у кого вероятность оттока выше порога». Если решения нет — модель не нужна.
+      2. **Таргет.** Точное определение: «не сделал ни одного заказа в течение 30 дней после даты среза». Окно, единица, что считается событием.
+      3. **Момент предсказания (срез).** Признаки считаются только по данным, **доступным на дату среза**. Таргет — строго после неё.
+      4. **Единица наблюдения** — клиент на дату среза. Один клиент может войти в датасет с разными датами среза.
+      5. **Метрика качества** — согласована с решением (ранжирование → ROC AUC / precision@k, деньги → ожидаемая прибыль кампании).
+      6. **Бейзлайн** — простое правило: «не заказывал больше 30 дней». Модель должна обыгрывать его, иначе она не нужна.
+
+      ## Утечка данных (data leakage)
+
+      **Утечка** — информация, недоступная в момент реального предсказания, попала в признаки. Модель блестяще работает на тесте и бесполезна в проде.
+
+      | Тип | Пример |
+      |---|---|
+      | Утечка таргета | признак «число обращений в поддержку с темой "удалить аккаунт"» в модели оттока |
+      | Утечка из будущего | признак посчитан по всему периоду, включая окно таргета |
+      | Утечка через сплит | случайный сплит данных с временной структурой: модель учится на будущем |
+      | Утечка через предобработку | масштабирование или заполнение пропусков посчитаны на всём датасете до сплита |
+      | Дубли | один клиент в трейне и тесте с почти одинаковыми признаками |
+
+      > [!warn] Подозрительно хорошо — значит, утечка
+      > ROC AUC 0.99 в задаче оттока — почти всегда утечка. Первое, что надо сделать — посмотреть важность признаков: часто один признак «знает ответ».
+
+      ## Классы задач
+
+      | Задача | Примеры в продукте | Метрики |
+      |---|---|---|
+      | Бинарная классификация | отток, фрод, клик | ROC AUC, PR AUC, precision/recall, log loss |
+      | Регрессия | LTV, время доставки, спрос | MAE, RMSE, MAPE |
+      | Ранжирование | поиск, рекомендации | NDCG, precision@k |
+      | Прогноз временного ряда | заказы на завтра | MAE, MAPE, sMAPE |
+      | Uplift | кому давать скидку | Qini, uplift@k |
+
+      > [!interview]
+      > Кейс «построй модель оттока» начинай не с алгоритма, а с вопросов: что сделаем с прогнозом, как определён отток, на какую дату срез, какой бейзлайн. Это отличает аналитика от человека, который знает `model.fit()`.
+    sources:
+      - title: "Kaggle: Data leakage"
+        url: https://www.kaggle.com/code/alexisbcook/data-leakage
+      - title: "Google: Rules of Machine Learning"
+        url: https://developers.google.com/machine-learning/guides/rules-of-ml
+    tasks:
+      - type: single
+        q: Модель оттока клиента на 1 июня (отток — нет заказов 1–30 июня). Какой признак — **утечка**?
+        options:
+          - Число заказов за март–май
+          - Средний чек за последние 90 дней до 1 июня
+          - Число открытий приложения в июне
+          - Доля опозданий доставки в мае
+        answer: 2
+        explain: Открытия в июне происходят в окне таргета — на 1 июня их ещё нет. Причём они сильно связаны с тем, закажет ли человек. На тесте модель будет блестящей, в проде — бесполезной.
+      - type: single
+        q: Новая модель оттока показала ROC AUC = 0.993 на тесте. Что сделать в первую очередь?
+        options:
+          - Срочно выкатывать
+          - Искать утечку — посмотреть важность признаков и проверить, что все признаки доступны на дату среза
+          - Увеличить число деревьев
+          - Опубликовать статью
+        answer: 1
+        explain: В реальных задачах оттока AUC обычно 0.7–0.85. Почти идеальное качество — повод искать ошибку, а не радоваться.
+      - type: multi
+        q: Какие пункты обязательно определить **до** обучения модели оттока?
+        options:
+          - Какое решение будет приниматься на основе прогноза
+          - Точное определение оттока (окно, событие)
+          - Дату среза и правило, что признаки считаются только по данным до неё
+          - Какую библиотеку градиентного бустинга использовать
+          - Бейзлайн, который модель должна обыграть
+        answer: [0, 1, 2, 4]
+        explain: Выбор библиотеки — техническая деталь. Остальное определяет, будет ли модель вообще полезна.
+      - type: single
+        q: Данные — заказы за 2 года, задача — прогноз оттока. Как правильно разбить на обучение и тест?
+        options:
+          - Случайно, 70/30
+          - По времени — обучаемся на более ранних датах среза, тестируем на более поздних
+          - По алфавиту имён клиентов
+          - Тест не нужен, если есть кросс-валидация на всём датасете
+        answer: 1
+        explain: Временной сплит имитирует прод — модель обучена на прошлом и применяется к будущему. Случайный сплит смешивает периоды и даёт оптимистичную оценку, особенно при сезонности и дрейфе.
+      - type: single
+        q: Зачем нужен **бейзлайн** вроде «отток = не заказывал больше 30 дней»?
+        options:
+          - Он не нужен, если есть ML-модель
+          - Чтобы понять, приносит ли модель пользу сверх простого правила — и стоит ли её поддерживать
+          - Чтобы модель быстрее обучалась
+          - Бейзлайн используют только в научных статьях
+        answer: 1
+        explain: Если модель лучше правила на 0.01 AUC, сложность её поддержки, скорее всего, не окупится. Простое правило понятно бизнесу и не ломается.
+
+  - id: ml.linear
+    title: Линейная и логистическая регрессия
+    summary: Самые интерпретируемые модели — и как читать их коэффициенты.
+    theory: |
+      ## Линейная регрессия
+
+      $$\hat y = \beta_0 + \beta_1 x_1 + \ldots + \beta_k x_k$$
+
+      Коэффициент $\beta_j$ — на сколько в среднем меняется y при росте $x_j$ на единицу **при прочих равных**. «При прочих равных» — ключевое: коэффициент при «числе заказов» в модели выручки зависит от того, какие ещё признаки в модели.
+
+      Коэффициенты регрессии **не являются причинными эффектами**. Регрессия на наблюдательных данных отвечает на вопрос «как связаны», а не «что будет, если изменить». Для причинности нужен эксперимент или специальные методы (акт IV, ветка про причинность).
+
+      ## Логистическая регрессия
+
+      Для бинарного таргета модель предсказывает **логарифм шансов**:
+
+      $$\log\frac{p}{1-p} = \beta_0 + \beta^\top x, \qquad p = \sigma(\beta_0 + \beta^\top x) = \frac{1}{1+e^{-(\beta_0 + \beta^\top x)}}$$
+
+      $e^{\beta_j}$ — **отношение шансов** (odds ratio): во сколько раз меняются шансы события при росте признака на единицу. Коэффициент 0.69 означает рост шансов в 2 раза ($e^{0.69} \approx 2$).
+
+      ## Практика
+
+      - **Масштабирование.** Для регуляризованных моделей признаки надо стандартизовать (`StandardScaler`), иначе штраф действует неравномерно. После стандартизации коэффициенты можно сравнивать между собой: на сколько меняется лог-шанс при изменении признака на одно стандартное отклонение.
+      - **Категориальные признаки** — one-hot (`pd.get_dummies`, `OneHotEncoder`), одну категорию можно выбросить как базовую.
+      - **Регуляризация.** L2 (ridge) сжимает коэффициенты, L1 (lasso) зануляет часть — встроенный отбор признаков. В sklearn `LogisticRegression` по умолчанию использует L2 с `C=1.0` (C — обратная сила штрафа).
+      - **Мультиколлинеарность.** Сильно скоррелированные признаки делают коэффициенты нестабильными: знак может перевернуться. Предсказания при этом остаются нормальными.
+
+      ```python
+      from sklearn.pipeline import make_pipeline
+      from sklearn.preprocessing import StandardScaler
+      from sklearn.linear_model import LogisticRegression
+
+      model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
+      model.fit(X_train, y_train)
+      proba = model.predict_proba(X_test)[:, 1]
+      coefs = pd.Series(model[-1].coef_[0], index=X_train.columns)
+      ```
+
+      > [!tip]
+      > Логистическая регрессия — отличный первый шаг почти в любой задаче классификации: быстро, интерпретируемо, и задаёт планку, которую должны обыгрывать более сложные модели.
+    sources:
+      - title: "scikit-learn: LogisticRegression"
+        url: https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression
+      - title: "ISLR — An Introduction to Statistical Learning (бесплатно)"
+        url: https://www.statlearning.com/
+        note: главы 3 и 4
+    tasks:
+      - type: number
+        q: В логистической регрессии коэффициент при признаке «число обращений в поддержку» равен 0.405. Во сколько раз растут **шансы** оттока при одном дополнительном обращении? Округли до двух знаков.
+        answer: 1.5
+        atol: 0.01
+        explain: e^0.405 ≈ 1.50. Шансы растут в 1.5 раза. Вероятность меняется по-разному в зависимости от исходного уровня, поэтому говорят именно про шансы.
+      - type: python
+        q: |
+          Обучи логистическую регрессию предсказывать `churned` в `churn_features` по числовым признакам из списка `num`. Разбиение — `train_test_split(test_size=0.3, random_state=42, stratify=y)`, модель — `make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))`. Положи в `result` ROC AUC на тесте.
+        tables: [churn_features]
+        packages: [scikit-learn]
+        starter: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+          from sklearn.metrics import roc_auc_score
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X = churn_features[num]
+          y = churn_features['churned']
+
+          result = ...
+        solution: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+          from sklearn.metrics import roc_auc_score
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X = churn_features[num]
+          y = churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+          model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)).fit(X_tr, y_tr)
+          result = roc_auc_score(y_te, model.predict_proba(X_te)[:, 1])
+        test: |
+          assert isinstance(result, (float, np.floating)), 'result должен быть числом (ROC AUC)'
+          assert abs(float(result) - float(expected)) < 0.01, f'AUC {float(result):.3f}, ожидалось ≈ {float(expected):.3f}. Проверь разбиение и признаки.'
+        explain: |
+          AUC получается около 0.77 — обычный уровень для задачи оттока. Важно передать в `roc_auc_score` вероятности (`predict_proba[:, 1]`), а не метки классов (`predict`): по меткам AUC будет заметно ниже и бессмысленнее.
+      - type: python
+        q: |
+          Продолжи предыдущую задачу: обучи ту же модель на **всём** датасете и найди признак с **наибольшим положительным** коэффициентом (после стандартизации — то есть самый сильный фактор роста оттока). Положи его название (строку) в `result`.
+        tables: [churn_features]
+        packages: [scikit-learn]
+        starter: |
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
+          model.fit(churn_features[num], churn_features['churned'])
+
+          result = ...
+        solution: |
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
+          model.fit(churn_features[num], churn_features['churned'])
+          coefs = pd.Series(model[-1].coef_[0], index=num)
+          result = coefs.idxmax()
+        explain: Давность последнего заказа — самый сильный признак оттока почти в любом транзакционном продукте. Это та же логика, что у RFM-сегментации (Recency, Frequency, Monetary).
+      - type: single
+        q: В модели выручки пользователя коэффициент при «использовал промокод» отрицательный. Значит ли это, что промокоды уменьшают выручку?
+        options:
+          - Да, коэффициент показывает причинный эффект
+          - Нет — это связь при прочих равных в наблюдательных данных. Промокоды могут получать в основном «слабые» клиенты (конфаундинг); причинный эффект нужно мерить экспериментом
+          - Да, если p-value коэффициента меньше 0.05
+          - Нет, потому что у логистической регрессии коэффициенты не интерпретируются
+        answer: 1
+        explain: Коэффициент наблюдательной регрессии смешивает эффект промокода с тем, кому их выдают. Статистическая значимость коэффициента не делает его причинным.
+      - type: multi
+        q: Что верно про регуляризацию в логистической регрессии?
+        options:
+          - L1-регуляризация может занулить часть коэффициентов
+          - Перед регуляризованной моделью признаки обычно стандартизуют
+          - В sklearn параметр C — сила штрафа, чем больше C, тем сильнее штраф
+          - Регуляризация помогает бороться с переобучением
+        answer: [0, 1, 3]
+        explain: В sklearn C — **обратная** сила регуляризации. Маленький C — сильный штраф.
+
+  - id: ml.metrics
+    title: Метрики классификации
+    summary: Precision, recall, ROC AUC и порог — и почему accuracy почти всегда врёт.
+    theory: |
+      ## Матрица ошибок
+
+      | | Предсказали 1 | Предсказали 0 |
+      |---|---|---|
+      | **Факт 1** | TP | FN |
+      | **Факт 0** | FP | TN |
+
+      - **Precision** = TP / (TP + FP) — из тех, кого мы отметили, какая доля действительно «единицы». Важна, когда действие дорогое (звонок менеджера).
+      - **Recall** = TP / (TP + FN) — какую долю всех «единиц» мы нашли. Важна, когда пропуск дорогой (фрод).
+      - **F1** — гармоническое среднее precision и recall.
+      - **Accuracy** — доля верных. При дисбалансе классов бесполезна: при 2% фрода модель «никогда не фрод» имеет accuracy 98%.
+
+      ## Метрики без порога
+
+      - **ROC AUC** — вероятность того, что случайный положительный объект получит скор выше случайного отрицательного. Не зависит от порога и от доли классов. 0.5 — случайное угадывание.
+      - **PR AUC** (average precision) — площадь под кривой precision–recall. Чувствительна к дисбалансу и честнее показывает качество при редком положительном классе.
+      - **Log loss** — оценивает качество **вероятностей**. Важна, если вероятность используется как число (ожидаемая выручка, ставка в аукционе).
+
+      ::widget roc
+
+      ## Порог — бизнес-решение
+
+      Модель выдаёт вероятность, а действие требует порога. Порог выбирают из экономики, а не из «0.5 по умолчанию». Пример — кампания удержания:
+
+      - стоимость контакта (скидка) — c;
+      - если клиент уходит, контакт удерживает его с вероятностью s;
+      - удержанный клиент приносит маржу m.
+
+      Контакт выгоден, если $p \cdot s \cdot m > c$, то есть порог $p^* = \dfrac{c}{s \cdot m}$.
+
+      ## Калибровка
+
+      Модель **откалибрована**, если среди объектов с прогнозом 0.3 событие случается примерно в 30% случаев. Деревья и бустинг часто откалиброваны плохо, логистическая регрессия — обычно хорошо. Проверка — calibration plot (`sklearn.calibration.calibration_curve`). Если используешь вероятность в денежной формуле, калибровка важнее AUC.
+
+      > [!interview]
+      > «Что лучше — AUC 0.8 или 0.85?» — зависит от задачи: если нам нужен топ-1000 клиентов для звонков, важен precision в этом топе (precision@k), а не AUC по всей выборке.
+    sources:
+      - title: "scikit-learn: model evaluation"
+        url: https://scikit-learn.org/stable/modules/model_evaluation.html
+      - title: "Google ML Crash Course: ROC and AUC"
+        url: https://developers.google.com/machine-learning/crash-course/classification/roc-and-auc
+    tasks:
+      - type: number
+        q: |
+          Модель фрода на тесте: TP = 80, FP = 120, FN = 20, TN = 9 780. Чему равен **precision**? Ответ — доля от 0 до 1.
+        answer: 0.4
+        atol: 0.001
+        explain: 80 / (80 + 120) = 0.4. Recall при этом высокий — 80 / 100 = 0.8, а accuracy — 98.6%, хотя 60% тревог ложные.
+      - type: single
+        q: В задаче 1% положительных объектов. Какая метрика **хуже всего** отражает качество модели?
+        options:
+          - Precision и recall
+          - PR AUC
+          - Accuracy
+          - Precision@k
+        answer: 2
+        explain: Константная модель «всегда 0» получит accuracy 99%. Accuracy полезна, только когда классы сбалансированы и ошибки равноценны.
+      - type: number
+        q: |
+          Кампания удержания: скидка стоит 100 ₽, удерживает 30% тех, кто иначе ушёл бы, удержанный клиент приносит 1 000 ₽ маржи. При какой минимальной вероятности оттока контакт окупается? Ответ — доля от 0 до 1.
+        answer: 0.3333
+        atol: 0.002
+        explain: p · 0.3 · 1000 > 100 → p > 0.333. Порог 0.5 «по умолчанию» отрезал бы выгодных клиентов с вероятностью оттока 0.35–0.5.
+      - type: python
+        q: |
+          Используя ту же модель, что в уроке про регрессию (разбиение `test_size=0.3, random_state=42, stratify=y`, `make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))`), посчитай **precision и recall на тесте при пороге 0.333**. Положи в `result` кортеж `(precision, recall)`.
+        tables: [churn_features]
+        packages: [scikit-learn]
+        starter: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+          from sklearn.metrics import precision_score, recall_score
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X, y = churn_features[num], churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+          model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)).fit(X_tr, y_tr)
+          proba = model.predict_proba(X_te)[:, 1]
+
+          result = ...
+        solution: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+          from sklearn.metrics import precision_score, recall_score
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X, y = churn_features[num], churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+          model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)).fit(X_tr, y_tr)
+          proba = model.predict_proba(X_te)[:, 1]
+          pred = (proba >= 0.333).astype(int)
+          result = (precision_score(y_te, pred), recall_score(y_te, pred))
+        test: |
+          assert isinstance(result, (tuple, list)) and len(result) == 2, 'result должен быть парой (precision, recall)'
+          p, r = map(float, result)
+          ep, er = map(float, expected)
+          assert abs(p - ep) < 0.01 and abs(r - er) < 0.01, f'Получено precision={p:.3f}, recall={r:.3f}; ожидалось ≈ {ep:.3f}, {er:.3f}'
+        explain: При пороге ниже 0.5 recall растёт (находим больше уходящих), precision падает. Какой из компромиссов лучше, решает экономика кампании, а не метрика.
+      - type: multi
+        q: Что верно про ROC AUC?
+        options:
+          - Это вероятность, что случайный положительный объект получит скор выше случайного отрицательного
+          - Он не зависит от выбранного порога
+          - Он сильно падает, если доля положительного класса уменьшается при том же качестве разделения
+          - AUC = 0.5 соответствует случайному угадыванию
+          - Высокий AUC гарантирует, что вероятности модели хорошо откалиброваны
+        answer: [0, 1, 3]
+        explain: AUC инвариантен к доле классов (в отличие от PR AUC) и ничего не говорит о калибровке — можно умножить все вероятности на 0.1, и AUC не изменится.
+
+  - id: ml.validation
+    title: Переобучение и валидация
+    summary: Train, validation, test, кросс-валидация и самые незаметные утечки.
+    theory: |
+      ## Переобучение
+
+      Модель **переобучена**, если она запомнила шум обучающей выборки: ошибка на обучении маленькая, а на новых данных — большая. Чем сложнее модель и меньше данных, тем выше риск.
+
+      ::widget overfit
+
+      ## Три выборки
+
+      - **Train** — на ней учится модель;
+      - **Validation** — на ней выбираются гиперпараметры, признаки, порог;
+      - **Test** — откладывается и используется **один раз** для финальной оценки.
+
+      Если подбирать параметры по тесту, тест превращается в валидацию, и оценка качества становится оптимистичной.
+
+      ## Кросс-валидация
+
+      Данные делят на k частей (фолдов), модель обучают k раз, каждый раз оставляя одну часть для оценки. Среднее по фолдам — более стабильная оценка, чем одно разбиение, а разброс показывает, насколько ей можно верить.
+
+      ```python
+      from sklearn.model_selection import cross_val_score, StratifiedKFold
+      cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+      scores = cross_val_score(model, X, y, cv=cv, scoring='roc_auc')
+      print(scores.mean(), scores.std())
+      ```
+
+      Варианты:
+
+      - **StratifiedKFold** — сохраняет долю классов в каждом фолде;
+      - **GroupKFold** — один клиент целиком в одном фолде (если у клиента несколько строк);
+      - **TimeSeriesSplit** — обучение всегда на прошлом, проверка — на будущем.
+
+      ## Утечка через предобработку
+
+      > [!warn]
+      > `StandardScaler().fit(X)` на **всём** датасете до разбиения — утечка: среднее и дисперсия теста попали в обучение. Для скейлера эффект мал, а для target encoding или отбора признаков по корреляции с таргетом — огромен. Решение — **Pipeline**: вся предобработка внутри, и в кросс-валидации она обучается только на train-фолдах.
+
+      ## Learning curve
+
+      Если качество на валидации растёт с увеличением обучающей выборки — данных не хватает, стоит собрать больше. Если train и validation сошлись на низком уровне — модели не хватает сложности или признаков.
+
+      > [!interview]
+      > Частый вопрос — «почему качество модели в проде хуже, чем на тесте?». Причины: утечка, сплит не по времени, дрейф данных (поведение пользователей изменилось), разная логика признаков в обучении и в проде (training-serving skew), подбор параметров по тесту.
+    sources:
+      - title: "scikit-learn: cross-validation"
+        url: https://scikit-learn.org/stable/modules/cross_validation.html
+      - title: "scikit-learn: common pitfalls"
+        url: https://scikit-learn.org/stable/common_pitfalls.html
+    tasks:
+      - type: single
+        q: Аналитик перебрал 200 комбинаций гиперпараметров и выбрал ту, что дала лучший AUC **на тестовой выборке**. Что не так?
+        options:
+          - Ничего, так и выбирают параметры
+          - Тест использован как валидация — оценка качества завышена; нужна отдельная валидация или кросс-валидация, а тест — только для финальной проверки
+          - 200 комбинаций — слишком мало
+          - Нужно было выбрать по accuracy
+        answer: 1
+        explain: Выбирая лучшее из 200 по тесту, ты подгоняешь модель под конкретную тестовую выборку. Та же история, что с множественными сравнениями в A/B.
+      - type: single
+        q: У части клиентов в датасете по 5–10 строк (разные даты среза). Какую схему кросс-валидации выбрать?
+        options:
+          - Обычный KFold
+          - GroupKFold по customer_id — чтобы один клиент не попадал одновременно в обучение и проверку (или временной сплит)
+          - LeaveOneOut
+          - Кросс-валидация не нужна
+        answer: 1
+        explain: Если клиент есть и в train, и в validation, модель «узнаёт» его по признакам. Оценка получится завышенной.
+      - type: python
+        q: |
+          Оцени модель `make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))` на `churn_features` (числовые признаки `num`) **5-фолдовой стратифицированной кросс-валидацией** (`StratifiedKFold(n_splits=5, shuffle=True, random_state=42)`, scoring `'roc_auc'`). Положи в `result` средний AUC по фолдам.
+        tables: [churn_features]
+        packages: [scikit-learn]
+        starter: |
+          from sklearn.model_selection import cross_val_score, StratifiedKFold
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X, y = churn_features[num], churn_features['churned']
+
+          result = ...
+        solution: |
+          from sklearn.model_selection import cross_val_score, StratifiedKFold
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X, y = churn_features[num], churn_features['churned']
+          cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+          scores = cross_val_score(make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)), X, y, cv=cv, scoring='roc_auc')
+          result = scores.mean()
+        test: |
+          assert abs(float(result) - float(expected)) < 0.005, f'Средний AUC {float(result):.4f}, ожидалось ≈ {float(expected):.4f}'
+        explain: Скейлер внутри Pipeline обучается заново на каждом train-фолде — утечки нет. Посмотри и на `scores.std()`, чтобы понимать, насколько стабильна оценка.
+      - type: multi
+        q: Какие ситуации — **утечка** при валидации?
+        options:
+          - Заполнили пропуски средним по всему датасету до разбиения на фолды
+          - Отобрали 20 признаков с наибольшей корреляцией с таргетом на всём датасете, потом сделали кросс-валидацию
+          - Обучили StandardScaler внутри Pipeline, который передан в cross_val_score
+          - Случайно разбили данные временного ряда, и модель обучалась на днях после тестовых
+        answer: [0, 1, 3]
+        explain: Отбор признаков по таргету на всём датасете — особенно коварная утечка, потому что даёт большой прирост. Pipeline внутри кросс-валидации — правильный способ.
+      - type: single
+        q: Ошибка на обучении — 0.05, на валидации — 0.31, и разрыв растёт с усложнением модели. Что это?
+        options:
+          - Недообучение — нужна более сложная модель
+          - Переобучение — нужна регуляризация, упрощение модели или больше данных
+          - Утечка таргета
+          - Всё нормально
+        answer: 1
+        explain: Большой разрыв между train и validation — классический признак переобучения.
+
+  - id: ml.trees
+    title: Деревья, случайный лес и бустинг
+    summary: Основная рабочая лошадка табличного ML — и как не обмануться важностью признаков.
+    theory: |
+      ## Дерево решений
+
+      Дерево последовательно делит данные по порогам признаков так, чтобы листья были как можно «чище» по таргету. Плюсы: понимает нелинейности и взаимодействия, не требует масштабирования. Минус: одно глубокое дерево сильно переобучается.
+
+      ## Ансамбли
+
+      | | Случайный лес | Градиентный бустинг |
+      |---|---|---|
+      | Идея | много глубоких деревьев на бутстрап-выборках, усредняем | неглубокие деревья по очереди, каждое исправляет ошибки предыдущих |
+      | Что снижает | дисперсию (variance) | смещение (bias) |
+      | Чувствительность к параметрам | низкая | высокая (learning rate, глубина, число деревьев) |
+      | Качество на таблицах | хорошее | обычно лучшее |
+
+      Для табличных данных стандарт индустрии — **градиентный бустинг**: CatBoost, LightGBM, XGBoost. В sklearn есть `HistGradientBoostingClassifier` — быстрый и хороший.
+
+      Ключевые гиперпараметры бустинга:
+
+      - `learning_rate` — шаг; меньше шаг → нужно больше деревьев, но обычно лучше качество;
+      - `max_depth` / `num_leaves` — сложность одного дерева;
+      - число деревьев — подбирается с **ранней остановкой** по валидации.
+
+      ## Важность признаков
+
+      `feature_importances_` деревьев (по уменьшению impurity) смещена в пользу непрерывных признаков и признаков с большим числом уникальных значений. Надёжнее:
+
+      - **permutation importance** — насколько падает качество на валидации, если перемешать признак;
+      - **SHAP** — вклад признака в каждое отдельное предсказание, с направлением.
+
+      > [!warn]
+      > Важность признака — это про модель, а не про мир. «Признак важен» ≠ «если изменить признак, изменится таргет». Для причинных выводов нужен эксперимент.
+
+      ## Когда что
+
+      - Мало данных, нужна интерпретация, линейные связи → **логистическая регрессия**.
+      - Табличные данные, нелинейности, взаимодействия → **бустинг**.
+      - Нужен быстрый надёжный бейзлайн без тюнинга → **случайный лес**.
+
+      > [!interview]
+      > «Почему бустинг обычно лучше случайного леса?» — лес усредняет независимые глубокие деревья и снижает дисперсию, бустинг последовательно уменьшает смещение, исправляя ошибки. Но бустинг легче переобучить, поэтому нужна ранняя остановка.
+    sources:
+      - title: "scikit-learn: ensemble methods"
+        url: https://scikit-learn.org/stable/modules/ensemble.html
+      - title: "scikit-learn: permutation importance"
+        url: https://scikit-learn.org/stable/modules/permutation_importance.html
+      - title: SHAP documentation
+        url: https://shap.readthedocs.io/
+    tasks:
+      - type: python
+        q: |
+          Обучи `HistGradientBoostingClassifier(random_state=42)` на числовых признаках `num` **плюс** one-hot кодированных `platform` и `channel` (`pd.get_dummies(..., columns=['platform', 'channel'])`). Разбиение — `train_test_split(test_size=0.3, random_state=42, stratify=y)`. Положи в `result` ROC AUC на тесте.
+        tables: [churn_features]
+        packages: [scikit-learn]
+        starter: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.ensemble import HistGradientBoostingClassifier
+          from sklearn.metrics import roc_auc_score
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X = pd.get_dummies(churn_features[num + ['platform', 'channel']], columns=['platform', 'channel'])
+          y = churn_features['churned']
+
+          result = ...
+        solution: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.ensemble import HistGradientBoostingClassifier
+          from sklearn.metrics import roc_auc_score
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X = pd.get_dummies(churn_features[num + ['platform', 'channel']], columns=['platform', 'channel'])
+          y = churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+          model = HistGradientBoostingClassifier(random_state=42).fit(X_tr, y_tr)
+          result = roc_auc_score(y_te, model.predict_proba(X_te)[:, 1])
+        test: |
+          assert abs(float(result) - float(expected)) < 0.01, f'AUC {float(result):.3f}, ожидалось ≈ {float(expected):.3f}'
+        explain: |
+          Сравни с логистической регрессией из прошлых уроков. В этих данных связь таргета с признаками почти линейна в логитах, поэтому бустинг не обязан выигрывать. Это нормальная ситуация: сложная модель оправдана, только если она заметно лучше простой.
+      - type: single
+        q: Чем градиентный бустинг принципиально отличается от случайного леса?
+        options:
+          - Бустинг использует только одно дерево
+          - В бустинге деревья строятся последовательно, каждое исправляет ошибки ансамбля; в лесу — независимо на бутстрап-выборках, и результаты усредняются
+          - Случайный лес работает только с категориальными признаками
+          - Ничем, это синонимы
+        answer: 1
+        explain: Лес снижает дисперсию усреднением, бустинг — смещение последовательными поправками.
+      - type: single
+        q: По `feature_importances_` случайного леса признак `user_id` оказался на втором месте. Что это значит?
+        options:
+          - user_id сильно влияет на отток
+          - Импортанс по impurity смещён в пользу признаков с большим числом уникальных значений — модель подстроилась под шум; признак надо убрать и проверить важности через permutation importance
+          - Нужно добавить больше идентификаторов
+          - Это доказывает, что модель хорошая
+        answer: 1
+        explain: Идентификатор не несёт смысла, но у него тысячи уникальных значений, по которым дереву удобно делить обучающую выборку. Это ещё и признак переобучения.
+      - type: multi
+        q: Какие практики разумны при обучении градиентного бустинга?
+        options:
+          - Подбирать число деревьев ранней остановкой по валидации
+          - Уменьшать learning_rate, увеличивая число деревьев
+          - Масштабировать признаки StandardScaler — без этого деревья не работают
+          - Ограничивать глубину деревьев
+        answer: [0, 1, 3]
+        explain: Деревьям масштаб признаков не важен — они смотрят только на порядок значений.

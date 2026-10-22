@@ -1,0 +1,910 @@
+branch: sql
+title: SQL по продуктовым логам
+color: "#5ad1a0"
+nodes:
+
+  - id: sql.select
+    title: SELECT, WHERE и порядок выполнения
+    summary: Как СУБД на самом деле читает запрос, и почему NULL и даты ломают фильтры.
+    theory: |
+      Все задачи в тренажёре решаются на одних и тех же данных — логах вымышленного сервиса доставки продуктов **«Корзинка»** за январь–июль 2024. Это DuckDB: синтаксис почти как в PostgreSQL, плюс удобные аналитические функции. Схему таблиц можно раскрыть над каждым редактором, а в «Песочнице» можно писать любые запросы.
+
+      ## Порядок выполнения
+
+      Запрос пишется в одном порядке, а логически выполняется в другом. Это объясняет половину ошибок новичков: почему в `WHERE` нельзя использовать алиас из `SELECT`, а в `ORDER BY` можно.
+
+      | Порядок записи | Порядок выполнения |
+      |---|---|
+      | SELECT | 1. FROM и JOIN — собрать строки |
+      | FROM | 2. WHERE — отфильтровать строки |
+      | WHERE | 3. GROUP BY — сгруппировать |
+      | GROUP BY | 4. HAVING — отфильтровать группы |
+      | HAVING | 5. SELECT — посчитать выражения, оконные функции |
+      | ORDER BY | 6. DISTINCT, ORDER BY |
+      | LIMIT | 7. LIMIT |
+
+      > [!tip]
+      > DuckDB, ClickHouse и BigQuery разрешают алиасы из SELECT в WHERE и GROUP BY — это расширение. В PostgreSQL и на собеседовании лучше так не делать.
+
+      ## NULL — это «неизвестно», а не «пусто»
+
+      Любое сравнение с NULL даёт NULL, а WHERE пропускает только строки, где условие **истинно**. Поэтому:
+
+      - `promo_code = NULL` не найдёт ничего — нужно `promo_code IS NULL`;
+      - `promo_code != 'WELCOME'` **выбросит** и все заказы без промокода, потому что `NULL != 'WELCOME'` — это NULL;
+      - `NOT IN (подзапрос)` вернёт пустоту, если в подзапросе есть хоть один NULL.
+
+      Правильный способ сказать «не WELCOME, включая отсутствие промокода»: `promo_code IS DISTINCT FROM 'WELCOME'` или `COALESCE(promo_code, 'none') != 'WELCOME'`.
+
+      ## Даты и время
+
+      В таблицах есть два типа: `DATE` (день) и `TIMESTAMP` (момент времени). Главная ловушка — фильтр по дню на поле типа TIMESTAMP:
+
+      ```sql
+      -- Неверно: '2024-03-08' превращается в '2024-03-08 00:00:00',
+      -- и заказы позже полуночи 8 марта не попадут
+      WHERE ts BETWEEN '2024-03-08' AND '2024-03-08'
+
+      -- Верно: полуоткрытый интервал
+      WHERE ts >= '2024-03-08' AND ts < '2024-03-09'
+
+      -- Тоже верно, но мешает индексам в «настоящих» базах
+      WHERE ts::DATE = '2024-03-08'
+      ```
+
+      Полуоткрытый интервал `[начало, конец)` — привычка, которая спасает: соседние периоды не пересекаются и не теряют границу.
+
+      ## CASE WHEN — if внутри запроса
+
+      ```sql
+      SELECT order_id,
+             CASE
+               WHEN revenue < 500  THEN 'small'
+               WHEN revenue < 1500 THEN 'medium'
+               ELSE 'large'
+             END AS check_size
+      FROM orders
+      ```
+
+      Условия проверяются сверху вниз, срабатывает первое истинное. Если ни одно не сработало и нет ELSE — получится NULL.
+
+      > [!interview]
+      > Вопрос «что вернёт `SELECT COUNT(*) FROM t WHERE x != 5`, если в x есть NULL» задают постоянно. Ответ: строки с NULL не посчитаются.
+    sources:
+      - title: DuckDB — SELECT statement
+        url: https://duckdb.org/docs/sql/statements/select
+        note: справочник по синтаксису
+      - title: Modern SQL — NULL
+        url: https://modern-sql.com/concept/null
+        note: подробно про трёхзначную логику
+    tasks:
+      - type: single
+        q: В каком порядке **логически** выполняются части запроса?
+        options:
+          - SELECT → FROM → WHERE → GROUP BY → HAVING → ORDER BY
+          - FROM → WHERE → GROUP BY → HAVING → SELECT → ORDER BY
+          - FROM → SELECT → WHERE → GROUP BY → ORDER BY → HAVING
+          - FROM → GROUP BY → WHERE → SELECT → HAVING → ORDER BY
+        answer: 1
+        explain: |
+          Сначала собираются строки (FROM, JOIN), потом фильтруются (WHERE), группируются (GROUP BY), фильтруются группы (HAVING), и только потом считается SELECT. Поэтому в WHERE нельзя сослаться на агрегат — его ещё не существует, для этого есть HAVING.
+      - type: sql
+        q: |
+          Найди пользователей из **Казани** на **iOS**, которые зарегистрировались в **марте 2024**. Выведи `user_id` и `signup_date`, отсортируй по дате регистрации, а при равенстве — по `user_id`.
+        tables: [users]
+        starter: |
+          SELECT user_id, signup_date
+          FROM users
+          WHERE
+        solution: |
+          SELECT user_id, signup_date
+          FROM users
+          WHERE city = 'Казань'
+            AND platform = 'ios'
+            AND signup_date >= '2024-03-01' AND signup_date < '2024-04-01'
+          ORDER BY signup_date, user_id
+        ordered: true
+        explain: |
+          Полуоткрытый интервал по датам — самый надёжный способ выбрать месяц. Можно и `date_trunc('month', signup_date) = '2024-03-01'` или `strftime(signup_date, '%Y-%m') = '2024-03'`.
+      - type: single
+        q: |
+          Продакт просит число заказов, оформленных **не** по промокоду WELCOME. Аналитик пишет `SELECT COUNT(*) FROM orders WHERE promo_code != 'WELCOME'`. Что не так?
+        options:
+          - Всё верно
+          - Не посчитаются заказы без промокода — у них promo_code равен NULL, а сравнение с NULL не истинно
+          - Посчитаются отменённые заказы, а их надо исключить
+          - '!= не работает со строками, нужно <>'
+        answer: 1
+        explain: |
+          `NULL != 'WELCOME'` даёт NULL, и WHERE такую строку отбрасывает. А заказы без промокода — большинство. Правильно: `WHERE promo_code IS DISTINCT FROM 'WELCOME'` или `WHERE promo_code IS NULL OR promo_code != 'WELCOME'`. Про отменённые заказы в вопросе ничего не сказано — это уже другой вопрос к продакту.
+      - type: sql
+        q: |
+          Сколько заказов было сделано **8 марта 2024** и какая у них суммарная выручка? Учитывай только доставленные заказы (`status = 'delivered'`). Две колонки: `orders_cnt`, `revenue`. Округлять не нужно.
+        tables: [orders]
+        starter: |
+          SELECT
+            COUNT(*) AS orders_cnt,
+            SUM(revenue) AS revenue
+          FROM orders
+          WHERE
+        solution: |
+          SELECT COUNT(*) AS orders_cnt, SUM(revenue) AS revenue
+          FROM orders
+          WHERE status = 'delivered'
+            AND ts >= '2024-03-08' AND ts < '2024-03-09'
+        explain: |
+          Если написать `ts BETWEEN '2024-03-08' AND '2024-03-08'`, получится ноль строк: правая граница превращается в полночь 8 марта. А `BETWEEN '2024-03-08' AND '2024-03-09'` захватит заказы ровно в полночь 9-го — ошибка редкая, но реальная.
+      - type: sql
+        q: |
+          Разбей **все** заказы на сегменты по размеру чека: `'<500'`, `'500-1500'`, `'1500-3000'`, `'3000+'` (левая граница включается, правая нет: заказ на ровно 1500 — в `'1500-3000'`). Выведи `segment` и `orders` — число заказов в сегменте.
+        tables: [orders]
+        starter: |
+          SELECT
+            CASE
+              WHEN revenue < 500 THEN '<500'
+              -- допиши остальные сегменты
+            END AS segment,
+            COUNT(*) AS orders
+          FROM orders
+          GROUP BY 1
+        solution: |
+          SELECT
+            CASE
+              WHEN revenue < 500 THEN '<500'
+              WHEN revenue < 1500 THEN '500-1500'
+              WHEN revenue < 3000 THEN '1500-3000'
+              ELSE '3000+'
+            END AS segment,
+            COUNT(*) AS orders
+          FROM orders
+          GROUP BY 1
+        explain: |
+          CASE проверяет условия сверху вниз, поэтому во второй ветке достаточно `revenue < 1500` — всё, что меньше 500, уже забрала первая. `GROUP BY 1` — группировка по первой колонке SELECT, удобно для длинных выражений.
+
+  - id: sql.agg
+    title: Агрегаты и GROUP BY
+    summary: COUNT бывает трёх видов, AVG молча игнорирует NULL, а HAVING — это WHERE для групп.
+    theory: |
+      ## Три разных COUNT
+
+      | Выражение | Что считает |
+      |---|---|
+      | `COUNT(*)` | все строки группы |
+      | `COUNT(promo_code)` | строки, где promo_code не NULL |
+      | `COUNT(DISTINCT user_id)` | число уникальных непустых значений |
+
+      Метрики «число заказов» и «число покупателей» отличаются ровно этим: `COUNT(*)` против `COUNT(DISTINCT user_id)`. Перепутать их — классическая ошибка в отчёте.
+
+      ## Агрегаты и NULL
+
+      Все агрегаты, кроме `COUNT(*)`, **пропускают NULL**. `AVG(x)` — это сумма непустых значений, делённая на их количество, а не на число строк. Если пустое значение на самом деле означает ноль (пользователь ничего не купил), его надо явно превратить в ноль: `AVG(COALESCE(revenue, 0))`.
+
+      ## Условная агрегация
+
+      Посчитать несколько метрик в одном проходе — стандартный приём:
+
+      ```sql
+      SELECT platform,
+             COUNT(*) AS users,
+             COUNT(*) FILTER (WHERE channel = 'ads') AS ads_users,
+             AVG(CASE WHEN channel = 'ads' THEN 1 ELSE 0 END) AS ads_share
+      FROM users
+      GROUP BY platform
+      ```
+
+      `FILTER (WHERE ...)` есть в DuckDB и PostgreSQL. Универсальный вариант — `SUM(CASE WHEN ... THEN 1 ELSE 0 END)`. А **среднее от индикатора 0/1 — это доля**: удобный трюк для конверсий.
+
+      ## WHERE против HAVING
+
+      WHERE фильтрует строки **до** группировки, HAVING — группы **после**. Условие на агрегат (`COUNT(*) > 10`) возможно только в HAVING. Условие на обычную колонку лучше ставить в WHERE: строк в группировку попадёт меньше.
+
+      ## Деление
+
+      > [!warn] Целочисленное деление
+      > В PostgreSQL `3 / 4 = 0`, потому что оба числа целые. В DuckDB и ClickHouse `/` всегда даёт дробное число. Чтобы запрос работал везде, умножай на `1.0`: `COUNT(*) * 1.0 / COUNT(DISTINCT user_id)`.
+
+      ## GROUP BY и «лишние» колонки
+
+      Каждая колонка в SELECT должна быть либо в GROUP BY, либо внутри агрегата. MySQL в старом режиме позволял нарушать это правило и брал случайное значение — отсюда баги, которые годами живут в отчётах.
+
+      > [!interview]
+      > «Посчитай средний чек» — уточни: среднее по заказам (`AVG(revenue)`) или выручку на покупателя (`SUM(revenue) / COUNT(DISTINCT user_id)`)? Включать ли отменённые заказы? Вопросы до запроса ценятся больше, чем быстрый запрос.
+    sources:
+      - title: DuckDB — aggregate functions
+        url: https://duckdb.org/docs/sql/functions/aggregates
+      - title: DuckDB — FILTER clause
+        url: https://duckdb.org/docs/sql/query_syntax/filter
+    tasks:
+      - type: single
+        q: |
+          В таблице orders 100 строк. У 30 заказов есть промокод, у 70 — NULL. Заказы сделали 40 разных пользователей. Что вернёт `SELECT COUNT(*), COUNT(promo_code), COUNT(DISTINCT user_id) FROM orders`?
+        options:
+          - 100, 100, 40
+          - 100, 30, 40
+          - 100, 30, 100
+          - 30, 30, 40
+        answer: 1
+        explain: COUNT(*) считает строки, COUNT(колонка) — непустые значения, COUNT(DISTINCT) — уникальные непустые значения.
+      - type: sql
+        q: |
+          Для каждой платформы посчитай число пользователей и долю пользователей, пришедших из платного канала (`channel = 'ads'`). Колонки: `platform`, `users`, `ads_share` (доля от 0 до 1, округлять не нужно).
+        tables: [users]
+        starter: |
+          SELECT platform,
+                 COUNT(*) AS users
+          FROM users
+          GROUP BY platform
+        solution: |
+          SELECT platform,
+                 COUNT(*) AS users,
+                 AVG(CASE WHEN channel = 'ads' THEN 1 ELSE 0 END) AS ads_share
+          FROM users
+          GROUP BY platform
+        explain: Среднее от индикатора 0/1 — это доля. Эквивалентно `COUNT(*) FILTER (WHERE channel = 'ads') * 1.0 / COUNT(*)`.
+      - type: sql
+        q: |
+          Посчитай долю отменённых заказов для каждого промокода. Заказы без промокода объедини в группу `'none'`. Колонки: `promo`, `orders`, `cancel_rate` (от 0 до 1).
+        tables: [orders]
+        starter: |
+          SELECT
+          FROM orders
+          GROUP BY 1
+        solution: |
+          SELECT COALESCE(promo_code, 'none') AS promo,
+                 COUNT(*) AS orders,
+                 AVG(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancel_rate
+          FROM orders
+          GROUP BY 1
+        explain: |
+          `COALESCE` возвращает первый непустой аргумент — так NULL превращается в осмысленную категорию. Без него GROUP BY всё равно соберёт NULL-ы в отдельную группу, но в отчёте она будет выглядеть как пустая ячейка.
+      - type: multi
+        q: Какие утверждения про WHERE и HAVING верны?
+        options:
+          - Условие `COUNT(*) > 5` можно написать только в HAVING
+          - "HAVING выполняется до GROUP BY"
+          - Условие `status = 'delivered'` лучше писать в WHERE, а не в HAVING
+          - В одном запросе можно использовать и WHERE, и HAVING
+        answer: [0, 2, 3]
+        explain: HAVING выполняется после группировки и фильтрует уже группы. Условия на обычные колонки в WHERE отсекают строки раньше — это и правильнее по смыслу, и быстрее.
+      - type: sql
+        q: |
+          Найди «лояльных» пользователей — тех, у кого **10 и больше доставленных** заказов. Колонки: `user_id`, `orders`, `revenue` (сумма выручки по доставленным). Сортировка: по `orders` по убыванию, затем по `user_id`.
+        tables: [orders]
+        starter: |
+          SELECT user_id,
+                 COUNT(*) AS orders,
+                 SUM(revenue) AS revenue
+          FROM orders
+        solution: |
+          SELECT user_id,
+                 COUNT(*) AS orders,
+                 SUM(revenue) AS revenue
+          FROM orders
+          WHERE status = 'delivered'
+          GROUP BY user_id
+          HAVING COUNT(*) >= 10
+          ORDER BY orders DESC, user_id
+        ordered: true
+        explain: Фильтр по статусу — в WHERE (до группировки), порог по числу заказов — в HAVING (после).
+
+  - id: sql.joins
+    title: JOIN-ы и потерянные строки
+    summary: LEFT JOIN, который тихо становится INNER, анти-джойн и размножение строк.
+    theory: |
+      ## Виды соединений
+
+      | JOIN | Что останется |
+      |---|---|
+      | `INNER JOIN` | только пары, где ключ нашёлся в обеих таблицах |
+      | `LEFT JOIN` | все строки левой таблицы; где пары нет — NULL справа |
+      | `FULL JOIN` | все строки обеих таблиц |
+      | `CROSS JOIN` | все комбинации (декартово произведение) |
+
+      В продуктовой аналитике LEFT JOIN — основной. Вопрос почти всегда звучит как «из всех пользователей сколько сделали X», и пользователи без X должны остаться в знаменателе.
+
+      ```sql
+      -- Конверсия зарегистрированных в покупку
+      SELECT COUNT(DISTINCT u.user_id) AS users,
+             COUNT(DISTINCT o.user_id) AS buyers
+      FROM users u
+      LEFT JOIN orders o ON o.user_id = u.user_id
+      ```
+
+      ## Ловушка 1: WHERE по правой таблице
+
+      ```sql
+      SELECT ...
+      FROM users u
+      LEFT JOIN orders o ON o.user_id = u.user_id
+      WHERE o.status = 'delivered'   -- пользователи без заказов исчезли!
+      ```
+
+      У пользователей без заказов `o.status` — NULL, условие не истинно, строка выброшена. LEFT JOIN тихо превратился в INNER. Правильно — перенести условие в ON:
+
+      ```sql
+      LEFT JOIN orders o ON o.user_id = u.user_id AND o.status = 'delivered'
+      ```
+
+      ## Ловушка 2: размножение строк (fan-out)
+
+      Если у ключа несколько совпадений справа, левая строка размножается. Соединили пользователей с заказами и с событиями — и каждый заказ повторился столько раз, сколько у пользователя событий. `SUM(revenue)` после такого джойна будет завышен в разы.
+
+      Лечится так: **сначала агрегируй, потом соединяй**.
+
+      ```sql
+      WITH rev AS (SELECT user_id, SUM(revenue) AS revenue FROM orders GROUP BY user_id),
+           ev  AS (SELECT user_id, COUNT(*) AS events FROM events GROUP BY user_id)
+      SELECT u.user_id, rev.revenue, ev.events
+      FROM users u
+      LEFT JOIN rev USING (user_id)
+      LEFT JOIN ev  USING (user_id)
+      ```
+
+      > [!tip]
+      > Привычка: после каждого JOIN проверяй, что число строк такое, как ты ожидаешь. `SELECT COUNT(*), COUNT(DISTINCT user_id)` занимает пять секунд, а находит половину багов.
+
+      ## Анти-джойн: «у кого НЕ было»
+
+      ```sql
+      -- Пользователи без заказов
+      SELECT u.*
+      FROM users u
+      LEFT JOIN orders o ON o.user_id = u.user_id
+      WHERE o.user_id IS NULL
+
+      -- То же самое через NOT EXISTS
+      SELECT * FROM users u
+      WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.user_id)
+      ```
+
+      Вариант с `NOT IN (SELECT user_id FROM orders)` опасен: если в подзапросе встретится NULL, результат станет пустым.
+
+      ## CTE: WITH
+
+      `WITH имя AS (...)` — именованный подзапрос. Запрос читается сверху вниз, как рецепт, и его легко отлаживать по шагам. На собеседованиях решения с CTE читают охотнее, чем матрёшку подзапросов.
+    sources:
+      - title: DuckDB — JOIN clause
+        url: https://duckdb.org/docs/sql/query_syntax/from
+      - title: "Mode: SQL joins tutorial"
+        url: https://mode.com/sql-tutorial/sql-joins
+    tasks:
+      - type: sql
+        q: |
+          Посчитай конверсию зарегистрированных пользователей в покупку (хотя бы один заказ любого статуса) по каналам привлечения. Колонки: `channel`, `users`, `buyers`, `conversion` (buyers / users, от 0 до 1).
+        tables: [users, orders]
+        starter: |
+          SELECT u.channel,
+                 COUNT(DISTINCT u.user_id) AS users
+          FROM users u
+          LEFT JOIN orders o ON o.user_id = u.user_id
+          GROUP BY u.channel
+        solution: |
+          SELECT u.channel,
+                 COUNT(DISTINCT u.user_id) AS users,
+                 COUNT(DISTINCT o.user_id) AS buyers,
+                 COUNT(DISTINCT o.user_id) * 1.0 / COUNT(DISTINCT u.user_id) AS conversion
+          FROM users u
+          LEFT JOIN orders o ON o.user_id = u.user_id
+          GROUP BY u.channel
+        explain: '`COUNT(DISTINCT o.user_id)` не считает NULL — то есть пользователей, у которых пары в orders не нашлось. Поэтому один LEFT JOIN даёт и знаменатель, и числитель.'
+      - type: single
+        q: |
+          Запрос должен показать всех пользователей и их число доставленных заказов (включая нули):
+
+          ```sql
+          SELECT u.user_id, COUNT(o.order_id) AS delivered
+          FROM users u
+          LEFT JOIN orders o ON o.user_id = u.user_id
+          WHERE o.status = 'delivered'
+          GROUP BY u.user_id
+          ```
+
+          Что получится?
+        options:
+          - Всё верно, пользователи без заказов получат 0
+          - Пользователи без доставленных заказов пропадут из результата
+          - Запрос упадёт с ошибкой
+          - Посчитаются и отменённые заказы
+        answer: 1
+        explain: Условие на правую таблицу в WHERE отбрасывает строки, где справа NULL. Условие нужно перенести в ON — `LEFT JOIN orders o ON o.user_id = u.user_id AND o.status = 'delivered'`.
+      - type: sql
+        q: |
+          Сколько пользователей на каждой платформе **не сделали ни одного заказа**? Колонки: `platform`, `users_without_orders`.
+        tables: [users, orders]
+        starter: |
+          SELECT u.platform, COUNT(*) AS users_without_orders
+          FROM users u
+        solution: |
+          SELECT u.platform, COUNT(*) AS users_without_orders
+          FROM users u
+          LEFT JOIN orders o ON o.user_id = u.user_id
+          WHERE o.order_id IS NULL
+          GROUP BY u.platform
+        explain: |
+          Анти-джойн: LEFT JOIN, затем оставляем строки, где справа ничего не нашлось. Альтернатива: `WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.user_id)`. Обрати внимание: здесь проверка `IS NULL` в WHERE — именно то, что нужно.
+      - type: single
+        q: |
+          Аналитик хочет выручку на пользователя по городам и пишет:
+
+          ```sql
+          SELECT u.city, SUM(o.revenue) / COUNT(DISTINCT u.user_id)
+          FROM users u
+          JOIN orders o ON o.user_id = u.user_id
+          JOIN events e ON e.user_id = u.user_id
+          GROUP BY u.city
+          ```
+
+          Что не так?
+        options:
+          - Ничего, запрос верный
+          - JOIN с events размножает заказы — выручка завышена во столько раз, сколько у пользователя событий
+          - COUNT(DISTINCT) нельзя использовать вместе с SUM
+          - Нужно сгруппировать ещё и по user_id
+        answer: 1
+        explain: Каждый заказ пользователя соединится с каждым его событием. Если у человека 50 событий, его выручка учтётся 50 раз. Агрегируй orders и events отдельно, потом соединяй. А ещё здесь INNER JOIN — пользователи без заказов выпадут из знаменателя.
+      - type: sql
+        q: |
+          Какие **три** категории товаров чаще всего добавляют в корзину (`event_name = 'add_to_cart'`)? Колонки: `category`, `carts`. Сортировка по `carts` по убыванию.
+        tables: [events, items]
+        starter: |
+          SELECT i.category, COUNT(*) AS carts
+          FROM events e
+        solution: |
+          SELECT i.category, COUNT(*) AS carts
+          FROM events e
+          JOIN items i ON i.item_id = e.item_id
+          WHERE e.event_name = 'add_to_cart'
+          GROUP BY i.category
+          ORDER BY carts DESC
+          LIMIT 3
+        ordered: true
+        explain: Здесь INNER JOIN уместен — нас интересуют только события с товаром. `item_id` заполнен только у view_item и add_to_cart, так что остальные события отпали бы и без WHERE.
+
+  - id: sql.windows
+    title: Оконные функции
+    summary: Считать по группе, не схлопывая строки — первый заказ, интервалы, нарастающий итог.
+    theory: |
+      GROUP BY превращает группу в одну строку. Оконная функция считает что-то по группе, но **оставляет все строки** на месте. Это главный инструмент аналитика: первый заказ, предыдущее событие, доля от итога, нарастающая сумма.
+
+      ```sql
+      функция() OVER (PARTITION BY ... ORDER BY ... [рамка])
+      ```
+
+      - `PARTITION BY` — по каким группам считать (по пользователю, по дню);
+      - `ORDER BY` — порядок внутри группы;
+      - рамка — какие строки брать для агрегата (по умолчанию с начала группы до текущей строки).
+
+      ## Нумерация
+
+      | Функция | При равных значениях | Пример для 100, 90, 90, 80 |
+      |---|---|---|
+      | `ROW_NUMBER()` | разные номера в случайном порядке | 1, 2, 3, 4 |
+      | `RANK()` | одинаковый номер, потом пропуск | 1, 2, 2, 4 |
+      | `DENSE_RANK()` | одинаковый номер без пропусков | 1, 2, 2, 3 |
+
+      Первый заказ каждого пользователя:
+
+      ```sql
+      SELECT *
+      FROM (
+        SELECT o.*, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts) AS rn
+        FROM orders o
+      ) t
+      WHERE rn = 1
+      ```
+
+      В DuckDB, ClickHouse, BigQuery и Snowflake есть `QUALIFY` — это WHERE для оконных функций, без подзапроса:
+
+      ```sql
+      SELECT * FROM orders
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts) = 1
+      ```
+
+      ## Соседние строки: LAG и LEAD
+
+      `LAG(ts) OVER (PARTITION BY user_id ORDER BY ts)` — значение из предыдущей строки того же пользователя. Так считают интервалы между заказами, восстанавливают сессии, находят повторные действия.
+
+      ## Агрегаты в окне
+
+      ```sql
+      SELECT dt, revenue,
+             SUM(revenue) OVER (ORDER BY dt) AS cum_revenue,              -- нарастающий итог
+             AVG(revenue) OVER (ORDER BY dt ROWS BETWEEN 6 PRECEDING
+                                           AND CURRENT ROW) AS ma7,      -- скользящее среднее
+             revenue / SUM(revenue) OVER () AS share                      -- доля от общего итога
+      FROM daily
+      ```
+
+      > [!warn] Рамка по умолчанию
+      > С ORDER BY рамка по умолчанию — `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`. RANGE включает все строки с **таким же** значением ORDER BY. Если в одном дне два заказа, нарастающий итог «перепрыгнет» сразу на оба. Для построчного итога пиши `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`.
+
+      ## Оконные функции и GROUP BY вместе
+
+      Окно считается **после** GROUP BY, поэтому можно взять окно от агрегата: `SUM(COUNT(*)) OVER ()` — общий итог по всем группам, а `COUNT(*) * 1.0 / SUM(COUNT(*)) OVER ()` — доля группы.
+
+      > [!interview]
+      > Классика собеседований: «топ-N в каждой группе», «второй по величине», «разница с предыдущим днём», «найти пользователей с 3 днями активности подряд». Всё это — оконные функции.
+    sources:
+      - title: DuckDB — window functions
+        url: https://duckdb.org/docs/sql/functions/window_functions
+      - title: "Mode: window functions"
+        url: https://mode.com/sql-tutorial/sql-window-functions
+    tasks:
+      - type: single
+        q: Зарплаты в отделе — 100, 90, 90, 80. Что вернёт `DENSE_RANK() OVER (ORDER BY salary DESC)` для сотрудника с зарплатой 80?
+        options: ['3', '4', '2', 'Зависит от порядка строк']
+        answer: 0
+        explain: DENSE_RANK даёт одинаковый ранг равным значениям и не делает пропусков — 1, 2, 2, 3. RANK дал бы 4, ROW_NUMBER — тоже 4.
+      - type: sql
+        q: |
+          Найди **первый заказ** каждого пользователя (по времени, любой статус). Колонки: `user_id`, `order_id`, `ts`, `revenue`.
+        tables: [orders]
+        starter: |
+          SELECT user_id, order_id, ts, revenue
+          FROM orders
+        solution: |
+          SELECT user_id, order_id, ts, revenue
+          FROM orders
+          QUALIFY ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts, order_id) = 1
+        explain: |
+          Вариант без QUALIFY — через подзапрос с `rn = 1`. Добавлять в ORDER BY уникальный ключ (`order_id`) — хорошая привычка: если у двух заказов одинаковое время, результат будет детерминированным.
+      - type: sql
+        q: |
+          Посчитай **средний интервал в днях между соседними заказами** одного пользователя для каждой платформы. Интервал — разница календарных дат: `date_diff('day', дата предыдущего заказа, дата текущего)`. Учитывай все заказы. Пары, где предыдущего заказа нет, не участвуют. Колонки: `platform`, `avg_gap_days`.
+        tables: [orders, users]
+        starter: |
+          WITH gaps AS (
+            SELECT o.user_id,
+                   date_diff('day', LAG(o.ts::DATE) OVER (PARTITION BY o.user_id ORDER BY o.ts), o.ts::DATE) AS gap
+            FROM orders o
+          )
+          SELECT
+        solution: |
+          WITH gaps AS (
+            SELECT o.user_id,
+                   date_diff('day', LAG(o.ts::DATE) OVER (PARTITION BY o.user_id ORDER BY o.ts, o.order_id), o.ts::DATE) AS gap
+            FROM orders o
+          )
+          SELECT u.platform, AVG(g.gap) AS avg_gap_days
+          FROM gaps g
+          JOIN users u USING (user_id)
+          WHERE g.gap IS NOT NULL
+          GROUP BY u.platform
+        explain: LAG берёт дату предыдущего заказа того же пользователя. У первого заказа LAG вернёт NULL — такие строки исключаем (AVG и так пропустил бы NULL, но явный фильтр читается лучше).
+      - type: sql
+        q: |
+          Построй выручку по дням за **март 2024** (только доставленные заказы) с нарастающим итогом. Колонки: `dt` (дата), `revenue`, `cum_revenue`. Сортировка по дате.
+        tables: [orders]
+        starter: |
+          SELECT ts::DATE AS dt,
+                 SUM(revenue) AS revenue
+          FROM orders
+          WHERE status = 'delivered'
+            AND ts >= '2024-03-01' AND ts < '2024-04-01'
+          GROUP BY 1
+          ORDER BY 1
+        solution: |
+          SELECT ts::DATE AS dt,
+                 SUM(revenue) AS revenue,
+                 SUM(SUM(revenue)) OVER (ORDER BY ts::DATE) AS cum_revenue
+          FROM orders
+          WHERE status = 'delivered'
+            AND ts >= '2024-03-01' AND ts < '2024-04-01'
+          GROUP BY 1
+          ORDER BY 1
+        ordered: true
+        explain: '`SUM(SUM(revenue)) OVER (...)` — окно поверх агрегата: внутренний SUM работает в GROUP BY, внешний — в окне. Можно и через CTE: сначала дневная выручка, потом окно.'
+      - type: sql
+        q: |
+          Для каждого города найди **два самых дорогих заказа** (любой статус). Колонки: `city`, `order_id`, `revenue`, `rn` (1 или 2). Сортировка по городу, затем по `rn`.
+        tables: [orders, users]
+        starter: |
+          SELECT u.city, o.order_id, o.revenue,
+                 ROW_NUMBER() OVER (PARTITION BY u.city ORDER BY o.revenue DESC) AS rn
+          FROM orders o
+          JOIN users u USING (user_id)
+        solution: |
+          SELECT u.city, o.order_id, o.revenue,
+                 ROW_NUMBER() OVER (PARTITION BY u.city ORDER BY o.revenue DESC, o.order_id) AS rn
+          FROM orders o
+          JOIN users u USING (user_id)
+          QUALIFY rn <= 2
+          ORDER BY u.city, rn
+        ordered: true
+        explain: «Топ-N в группе» — самая частая задача на оконные функции. ROW_NUMBER, а не RANK, потому что нужно ровно два заказа даже при равенстве сумм.
+
+  - id: sql.dates
+    title: Даты, когорты и retention в SQL
+    summary: date_trunc, date_diff и retention N-го дня одним запросом.
+    theory: |
+      Почти все продуктовые метрики — это «сколько пользователей сделали X в период Y». Поэтому работа с датами — ежедневный навык.
+
+      ## Основные функции DuckDB
+
+      | Задача | DuckDB / PostgreSQL | ClickHouse |
+      |---|---|---|
+      | Отрезать время | `ts::DATE` | `toDate(ts)` |
+      | Начало недели/месяца | `date_trunc('week', ts)` | `toStartOfWeek(ts, 1)`, `toStartOfMonth(ts)` |
+      | Разница в днях | `date_diff('day', a, b)` | `dateDiff('day', a, b)` |
+      | Сдвиг | `d + INTERVAL 7 DAY` | `d + INTERVAL 7 DAY` |
+      | Часть даты | `extract('dow' FROM ts)`, `hour(ts)` | `toDayOfWeek(ts)`, `toHour(ts)` |
+      | Ряд дат | `generate_series(DATE '2024-01-01', DATE '2024-01-31', INTERVAL 1 DAY)` | `arrayJoin(...)` / `WITH FILL` |
+
+      > [!warn] Неделя начинается с понедельника?
+      > `date_trunc('week', ...)` в DuckDB и PostgreSQL начинает неделю с понедельника (ISO). Некоторые BI-системы и функции по умолчанию начинают с воскресенья. Расхождение «недельных» цифр между отчётами часто объясняется именно этим.
+
+      ## Когорта
+
+      **Когорта** — группа пользователей, объединённых общим событием в одном периоде. Обычно это неделя или месяц регистрации (или первой покупки). Сравнивать когорты между собой честнее, чем смотреть на общую активность: общая активность смешивает новых и старых пользователей.
+
+      ## Retention N-го дня
+
+      Классический **Day-N retention**: доля пользователей когорты, которые были активны **ровно на N-й день** после регистрации.
+
+      ```sql
+      WITH activity AS (
+        SELECT DISTINCT user_id, ts::DATE AS dt FROM events
+      )
+      SELECT date_trunc('month', u.signup_date) AS cohort,
+             COUNT(*) AS users,
+             COUNT(a.user_id) AS retained_d7,
+             COUNT(a.user_id) * 1.0 / COUNT(*) AS retention_d7
+      FROM users u
+      LEFT JOIN activity a
+        ON a.user_id = u.user_id AND a.dt = u.signup_date + 7
+      GROUP BY 1
+      ```
+
+      Обрати внимание на `DISTINCT` в CTE: без него пользователь с пятью событиями в седьмой день посчитался бы пять раз.
+
+      Варианты определения, которые надо проговаривать явно:
+
+      - **Classic (N-day)** — активен ровно в день N;
+      - **Range / bracket** — активен в окне, например дни 7–13 (недельный retention);
+      - **Rolling (unbounded)** — активен в день N **или позже**. Он всегда выше классического и монотонно убывает.
+
+      > [!warn] Неполные когорты
+      > Если данные заканчиваются 31 июля, у пользователей, зарегистрированных 28 июля, седьмого дня ещё не было. Включив их в знаменатель, ты занизишь retention последней когорты. Неполные когорты надо отрезать или явно помечать.
+
+      ## Время до события
+
+      «Через сколько дней после регистрации человек делает первый заказ?» Среднее здесь обманчиво: хвост из тех, кто купил через три месяца, тянет его вверх. Смотри на медиану и перцентили: `median(x)`, `quantile_cont(x, 0.9)`.
+    sources:
+      - title: DuckDB — date functions
+        url: https://duckdb.org/docs/sql/functions/date
+      - title: Cohort analysis (Wikipedia)
+        url: https://en.wikipedia.org/wiki/Cohort_analysis
+    tasks:
+      - type: sql
+        q: |
+          Посчитай **DAU** (уникальные пользователи с любым событием) по дням за первую неделю апреля 2024 (1–7 апреля включительно). Колонки: `dt`, `dau`. Сортировка по дате.
+        tables: [events]
+        starter: |
+          SELECT ts::DATE AS dt,
+          FROM events
+        solution: |
+          SELECT ts::DATE AS dt, COUNT(DISTINCT user_id) AS dau
+          FROM events
+          WHERE ts >= '2024-04-01' AND ts < '2024-04-08'
+          GROUP BY 1
+          ORDER BY 1
+        ordered: true
+        explain: DAU — это уникальные пользователи, а не события, поэтому `COUNT(DISTINCT user_id)`.
+      - type: sql
+        q: |
+          Посчитай **retention 7-го дня** по месячным когортам регистрации. Пользователь удержан, если у него есть хотя бы одно событие ровно в день `signup_date + 7`. Колонки: `cohort_month` (первое число месяца, тип DATE), `users`, `retained_d7`, `retention_d7`. Сортировка по когорте.
+        tables: [users, events]
+        starter: |
+          WITH activity AS (
+            SELECT DISTINCT user_id, ts::DATE AS dt
+            FROM events
+          )
+          SELECT date_trunc('month', u.signup_date) AS cohort_month,
+                 COUNT(*) AS users
+          FROM users u
+          GROUP BY 1
+          ORDER BY 1
+        solution: |
+          WITH activity AS (
+            SELECT DISTINCT user_id, ts::DATE AS dt
+            FROM events
+          )
+          SELECT date_trunc('month', u.signup_date) AS cohort_month,
+                 COUNT(*) AS users,
+                 COUNT(a.user_id) AS retained_d7,
+                 COUNT(a.user_id) * 1.0 / COUNT(*) AS retention_d7
+          FROM users u
+          LEFT JOIN activity a
+            ON a.user_id = u.user_id AND a.dt = u.signup_date + 7
+          GROUP BY 1
+          ORDER BY 1
+        ordered: true
+        explain: |
+          Условие на день — в ON, а не в WHERE: иначе неудержанные пользователи выпадут из знаменателя. `DISTINCT` в CTE защищает от дублей, когда у человека несколько событий в один день.
+      - type: single
+        q: Чем **rolling retention** 7-го дня отличается от классического?
+        options:
+          - Это одно и то же, просто другое название
+          - Rolling считает пользователя удержанным, если он был активен в 7-й день или в любой день позже, поэтому он всегда не меньше классического
+          - Rolling считается только по платящим пользователям
+          - Rolling считает активность в первые 7 дней после регистрации
+        answer: 1
+        explain: Rolling (unbounded) retention отвечает на вопрос «вернулся ли человек хотя бы раз начиная с дня N». Он выше классического и монотонно убывает с ростом N. Минус — он меняется задним числом, когда пользователь возвращается позже.
+      - type: sql
+        q: |
+          Посчитай **медианное число дней** от регистрации до первого заказа (любого статуса) по каналам привлечения. Пользователи без заказов не участвуют. Колонки: `channel`, `median_days`.
+        tables: [users, orders]
+        starter: |
+          WITH first_order AS (
+            SELECT user_id, MIN(ts)::DATE AS first_dt
+            FROM orders
+            GROUP BY user_id
+          )
+          SELECT
+        solution: |
+          WITH first_order AS (
+            SELECT user_id, MIN(ts)::DATE AS first_dt
+            FROM orders
+            GROUP BY user_id
+          )
+          SELECT u.channel,
+                 median(date_diff('day', u.signup_date, f.first_dt)) AS median_days
+          FROM users u
+          JOIN first_order f USING (user_id)
+          GROUP BY u.channel
+        explain: Медиана устойчива к длинному хвосту «купил через три месяца». В ClickHouse — `median()` или `quantileExact(0.5)()`, в PostgreSQL — `percentile_cont(0.5) WITHIN GROUP (ORDER BY ...)`.
+      - type: number
+        q: |
+          Данные заканчиваются **31 июля 2024**. Пользователь зарегистрировался 2024-07-20. Для какого **максимального N** у него уже можно честно посчитать retention N-го дня? Введи N.
+        answer: 11
+        atol: 0
+        explain: 31 − 20 = 11. День 11 после регистрации — это 31 июля, последний день в данных. Для N = 12 этого дня у нас ещё нет — пользователь просто не успел до него дожить.
+
+  - id: sql.funnels
+    title: Воронки и сессии
+    summary: Воронка по пользователям против воронки по событиям и восстановление сессий из сырых логов.
+    theory: |
+      ## Воронка
+
+      Воронка — последовательность шагов к целевому действию. В «Корзинке»:
+      `app_open → view_item → add_to_cart → checkout → purchase`.
+
+      Одну и ту же воронку можно посчитать тремя способами, и цифры будут разными:
+
+      | Способ | Что считаем | Когда уместен |
+      |---|---|---|
+      | По событиям | число событий каждого шага | почти никогда — один пользователь с 30 просмотрами ломает картину |
+      | По пользователям | уникальных пользователей, сделавших шаг за период | обзорные дашборды |
+      | По сессиям / строгая | шаг засчитан, только если предыдущий был раньше в той же сессии | анализ UX конкретного флоу |
+
+      Воронка «по пользователям за период» не проверяет порядок: человек мог сделать checkout в понедельник и просмотр в пятницу. Для дашборда это нормально, для разбора конкретного экрана — нет.
+
+      ```sql
+      SELECT event_name, COUNT(DISTINCT user_id) AS users
+      FROM events
+      WHERE ts >= '2024-06-01' AND ts < '2024-07-01'
+      GROUP BY event_name
+      ```
+
+      Конверсия шага = пользователи шага / пользователи предыдущего шага. Сквозная конверсия = последний шаг / первый.
+
+      ## Сессии
+
+      В логах обычно нет готового «визита» — его восстанавливают по паузам. Стандартное правило: **новая сессия начинается, если с предыдущего события пользователя прошло больше 30 минут**.
+
+      ```sql
+      WITH marked AS (
+        SELECT *,
+               CASE WHEN LAG(ts) OVER w IS NULL
+                      OR ts - LAG(ts) OVER w > INTERVAL 30 MINUTE
+                    THEN 1 ELSE 0 END AS is_new
+        FROM events
+        WINDOW w AS (PARTITION BY user_id ORDER BY ts)
+      )
+      SELECT *,
+             SUM(is_new) OVER (PARTITION BY user_id ORDER BY ts
+                               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS session_num
+      FROM marked
+      ```
+
+      Приём «флаг начала + нарастающая сумма флагов» — универсальный. Им же решаются задачи вида «найди серии дней подряд» (gaps and islands).
+
+      > [!tip]
+      > 30 минут — договорённость, а не закон природы. Для приложения доставки, где человек собирает корзину долго, можно взять больше. Главное — зафиксировать правило и не менять его между отчётами.
+
+      ## Где искать проблему в воронке
+
+      1. Сравни конверсию шага по **сегментам**: платформа, версия приложения, город, новый или старый пользователь. Провал обычно локален.
+      2. Посмотри **динамику по дням**: резкая ступенька — это релиз или поломка, плавный спад — сезонность или микс трафика.
+      3. Проверь **логирование**: если упала конверсия в шаг, который логирует новый SDK, сначала убедись, что событие вообще отправляется.
+
+      > [!interview]
+      > «Конверсия в оплату упала на 10%, что будешь делать?» — правильный ответ начинается с проверки данных и разбивки по сегментам, а не с гипотез про цены.
+    sources:
+      - title: "Mixpanel: funnels"
+        url: https://docs.mixpanel.com/docs/reports/funnels
+      - title: Gaps and islands
+        url: https://www.red-gate.com/simple-talk/databases/sql-server/t-sql-programming-sql-server/the-sql-of-gaps-and-islands-in-sequences/
+        note: классика про серии подряд
+    tasks:
+      - type: sql
+        q: |
+          Построй воронку **по пользователям** за **июнь 2024**: сколько уникальных пользователей сделали каждый шаг. Колонки: `step` (название события), `users`. Порядок строк — порядок шагов воронки: app_open, view_item, add_to_cart, checkout, purchase.
+        tables: [events]
+        starter: |
+          SELECT event_name AS step,
+                 COUNT(DISTINCT user_id) AS users
+          FROM events
+          WHERE ts >= '2024-06-01' AND ts < '2024-07-01'
+          GROUP BY event_name
+        solution: |
+          SELECT event_name AS step,
+                 COUNT(DISTINCT user_id) AS users
+          FROM events
+          WHERE ts >= '2024-06-01' AND ts < '2024-07-01'
+          GROUP BY event_name
+          ORDER BY CASE event_name
+                     WHEN 'app_open' THEN 1
+                     WHEN 'view_item' THEN 2
+                     WHEN 'add_to_cart' THEN 3
+                     WHEN 'checkout' THEN 4
+                     WHEN 'purchase' THEN 5
+                   END
+        ordered: true
+        explain: Сортировка по CASE задаёт порядок, который не совпадает ни с алфавитным, ни с числовым. Другой вариант — отдельная маленькая таблица шагов с номерами через `VALUES`.
+      - type: single
+        q: Почему воронку почти никогда не считают **по числу событий**?
+        options:
+          - События нельзя посчитать через COUNT
+          - Один пользователь может сделать десятки просмотров, и шаги перестают быть сравнимыми — конверсия «просмотр → корзина» зависит от того, сколько листают, а не от того, сколько людей дошли
+          - Событий слишком много, запрос будет медленным
+          - Это запрещено правилами GDPR
+        answer: 1
+        explain: Воронка отвечает на вопрос «какая доля людей дошла до шага». Событийные счётчики полезны для других вопросов (глубина просмотра), но не для конверсии.
+      - type: sql
+        q: |
+          Восстанови сессии по правилу «новая сессия — если с предыдущего события пользователя прошло **больше 30 минут**» (первое событие пользователя тоже открывает сессию). Посчитай число сессий в **июле 2024** по платформам. Учитывай только события июля, сессии восстанавливай по ним же. Колонки: `platform`, `sessions`.
+        tables: [events, users]
+        starter: |
+          WITH ev AS (
+            SELECT e.user_id, e.ts, u.platform,
+                   LAG(e.ts) OVER (PARTITION BY e.user_id ORDER BY e.ts) AS prev_ts
+            FROM events e
+            JOIN users u USING (user_id)
+            WHERE e.ts >= '2024-07-01' AND e.ts < '2024-08-01'
+          )
+          SELECT
+        solution: |
+          WITH ev AS (
+            SELECT e.user_id, e.ts, u.platform,
+                   LAG(e.ts) OVER (PARTITION BY e.user_id ORDER BY e.ts) AS prev_ts
+            FROM events e
+            JOIN users u USING (user_id)
+            WHERE e.ts >= '2024-07-01' AND e.ts < '2024-08-01'
+          )
+          SELECT platform,
+                 SUM(CASE WHEN prev_ts IS NULL OR ts - prev_ts > INTERVAL 30 MINUTE THEN 1 ELSE 0 END) AS sessions
+          FROM ev
+          GROUP BY platform
+        explain: |
+          Число сессий равно числу «начал сессии». Чтобы пронумеровать события по сессиям, добавь нарастающую сумму флагов — это пригодится, если нужна длительность или конверсия внутри сессии. Важно: WHERE по дате стоит внутри CTE, до LAG — иначе первое июльское событие увидело бы июньского «соседа».
+      - type: sql
+        q: |
+          Для каждой платформы посчитай за весь период: сколько пользователей дошли до `checkout`, сколько из них сделали `purchase` и конверсию между шагами. Колонки: `platform`, `checkout_users`, `purchase_users`, `cr` (purchase_users / checkout_users).
+        tables: [events, users]
+        starter: |
+          SELECT u.platform,
+                 COUNT(DISTINCT e.user_id) FILTER (WHERE e.event_name = 'checkout') AS checkout_users
+          FROM events e
+          JOIN users u USING (user_id)
+          GROUP BY u.platform
+        solution: |
+          SELECT u.platform,
+                 COUNT(DISTINCT e.user_id) FILTER (WHERE e.event_name = 'checkout') AS checkout_users,
+                 COUNT(DISTINCT e.user_id) FILTER (WHERE e.event_name = 'purchase') AS purchase_users,
+                 COUNT(DISTINCT e.user_id) FILTER (WHERE e.event_name = 'purchase') * 1.0
+                   / COUNT(DISTINCT e.user_id) FILTER (WHERE e.event_name = 'checkout') AS cr
+          FROM events e
+          JOIN users u USING (user_id)
+          GROUP BY u.platform
+        explain: Web отстаёт на шаге оплаты. Разрыв на уровне пользователей за весь период небольшой (многие платят со второй попытки), но на уровне отдельных попыток он заметнее. Это повод смотреть именно на флоу оплаты в браузере, а не на весь продукт.

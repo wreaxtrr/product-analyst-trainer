@@ -1,0 +1,496 @@
+branch: trials
+title: Испытания
+color: "#f2c66d"
+nodes:
+
+  - id: trial.1
+    title: "Испытание I: первый отчёт"
+    summary: Запрос, интервал и честный ответ продакту — всё из первого акта сразу.
+    intro: |
+      > [!note] Задача от продакта
+      > «Мы думаем, в каких городах запускать рекламу. Посмотри, где новые пользователи быстрее делают первый заказ и где они больше приносят. И скажи, насколько можно доверять разнице».
+    tasks:
+      - type: sql
+        q: |
+          Для каждого города посчитай долю зарегистрировавшихся, которые сделали **первый заказ (любого статуса) в течение 7 дней** после регистрации (`ts < signup_date + 7`). Колонки: `city`, `users`, `buyers7`, `cr7`.
+        tables: [users, orders]
+        starter: |
+          SELECT u.city, COUNT(DISTINCT u.user_id) AS users
+          FROM users u
+          LEFT JOIN orders o ON o.user_id = u.user_id
+          GROUP BY u.city
+        solution: |
+          SELECT u.city,
+                 COUNT(DISTINCT u.user_id) AS users,
+                 COUNT(DISTINCT o.user_id) AS buyers7,
+                 COUNT(DISTINCT o.user_id) * 1.0 / COUNT(DISTINCT u.user_id) AS cr7
+          FROM users u
+          LEFT JOIN orders o
+            ON o.user_id = u.user_id AND o.ts < u.signup_date + 7
+          GROUP BY u.city
+        explain: Условие окна — в ON, иначе пользователи без заказа в окне выпадут из знаменателя.
+      - type: number
+        q: |
+          В городе 2 000 зарегистрировавшихся и cr7 = 30%. Чему равна **полуширина 95% доверительного интервала** для cr7 (1.96 · SE)? Ответ в процентных пунктах.
+        answer: 2.01
+        tol: 0.02
+        unit: пп
+        explain: SE = √(0.3 · 0.7 / 2000) ≈ 0.01025; 1.96 · SE ≈ 0.0201, то есть ±2 пп.
+      - type: single
+        q: |
+          Допустим, в городе A cr7 = 33% (n = 850), в городе B — 31% (n = 780). Продакт спрашивает: «В городе A конверсия выше?». Лучший ответ?
+        options:
+          - Да, на 2 пп
+          - Разница 2 пп меньше погрешности каждой из оценок (±3 пп) — по этим данным нельзя сказать, что город A лучше
+          - Нет, город B лучше
+          - Нужно посмотреть выручку
+        answer: 1
+        explain: При таких n интервалы сильно перекрываются. Разница может быть случайной — нужен тест или больше данных.
+      - type: sql
+        q: |
+          Найди **три** города с наибольшей выручкой **доставленных** заказов на одного зарегистрированного пользователя (пользователи без заказов — в знаменателе). Колонки: `city`, `users`, `revenue_per_user`. Сортировка по `revenue_per_user` по убыванию.
+        tables: [users, orders]
+        starter: |
+          WITH r AS (
+            SELECT user_id, SUM(revenue) AS revenue
+            FROM orders
+            WHERE status = 'delivered'
+            GROUP BY user_id
+          )
+          SELECT
+        solution: |
+          WITH r AS (
+            SELECT user_id, SUM(revenue) AS revenue
+            FROM orders
+            WHERE status = 'delivered'
+            GROUP BY user_id
+          )
+          SELECT u.city, COUNT(*) AS users,
+                 SUM(COALESCE(r.revenue, 0)) / COUNT(*) AS revenue_per_user
+          FROM users u
+          LEFT JOIN r USING (user_id)
+          GROUP BY u.city
+          ORDER BY revenue_per_user DESC
+          LIMIT 3
+        ordered: true
+        explain: Сначала агрегируем заказы до пользователя, потом соединяем — так не будет размножения строк. Но помни про хвост выручки — пара оптовых заказов может поменять порядок городов.
+      - type: multi
+        q: Что стоит включить в ответ продакту?
+        options:
+          - Определения метрик (окно 7 дней, какие заказы считаются)
+          - Интервалы или размер выборки по каждому городу
+          - Вывод «Казань лучше», раз там число больше
+          - Оговорку, что разница городов может объясняться разным составом трафика (каналы, платформы)
+        answer: [0, 1, 3]
+        explain: Хороший отчёт показывает не только числа, но и насколько им можно верить, и что ещё может объяснять разницу.
+
+  - id: trial.2
+    title: "Испытание II: здоровье продукта"
+    summary: North Star, источники роста и экономика привлечения — обзор продукта для руководства.
+    intro: |
+      > [!note] Задача от руководителя
+      > «Готовим квартальный обзор. Нужна динамика еженедельно заказывающих клиентов в июле, понимание, откуда берётся выручка, и честный взгляд на платную рекламу».
+    tasks:
+      - type: sql
+        q: |
+          Посчитай **North Star** — число уникальных клиентов с доставленным заказом за неделю — для четырёх полных недель июля, начинающихся 1, 8, 15 и 22 июля 2024. Колонки: `week` (DATE, понедельник), `buyers`. Сортировка по неделе.
+        tables: [orders]
+        starter: |
+          SELECT date_trunc('week', ts)::DATE AS week
+          FROM orders
+          WHERE status = 'delivered'
+        solution: |
+          SELECT date_trunc('week', ts)::DATE AS week,
+                 COUNT(DISTINCT user_id) AS buyers
+          FROM orders
+          WHERE status = 'delivered'
+            AND ts >= '2024-07-01' AND ts < '2024-07-29'
+          GROUP BY 1
+          ORDER BY 1
+        ordered: true
+        explain: 1 июля 2024 — понедельник, поэтому `date_trunc('week')` даёт ровно эти четыре недели. Неделю 29–31 июля мы отрезали — она неполная. Метрика снижается к концу июля, потому что регистрации в данных закончились 30 июня, а новые пользователи — основной источник активности.
+      - type: sql
+        q: |
+          Раздели **GMV июля** (доставленные заказы) на новых покупателей (первый заказ любого статуса за всё время — в июле) и вернувшихся (первый заказ раньше). Колонки: `buyer_type` (`'new'` или `'returning'`), `buyers`, `gmv`.
+        tables: [orders]
+        starter: |
+          WITH f AS (
+            SELECT user_id, MIN(ts) AS first_ts
+            FROM orders
+            GROUP BY user_id
+          )
+          SELECT
+        solution: |
+          WITH f AS (
+            SELECT user_id, MIN(ts) AS first_ts
+            FROM orders
+            GROUP BY user_id
+          )
+          SELECT CASE WHEN f.first_ts >= '2024-07-01' THEN 'new' ELSE 'returning' END AS buyer_type,
+                 COUNT(DISTINCT o.user_id) AS buyers,
+                 SUM(o.revenue) AS gmv
+          FROM orders o
+          JOIN f USING (user_id)
+          WHERE o.status = 'delivered'
+            AND o.ts >= '2024-07-01' AND o.ts < '2024-08-01'
+          GROUP BY 1
+        explain: Первый заказ определяется по всем заказам (включая отменённые), а GMV — только по доставленным. В июле новых покупателей мало — регистрации в данных закончились 30 июня, а большинство покупает в первую неделю.
+      - type: number
+        q: |
+          LTV₉₀ по выручке у платного канала — 2 200 ₽, маржинальность заказа — 8%, CAC — 545 ₽. Чему равно отношение **LTV (по марже) / CAC** за 90 дней? Округли до сотых.
+        answer: 0.32
+        atol: 0.006
+        explain: 2 200 · 0.08 = 176 ₽ маржи; 176 / 545 ≈ 0.32. За 90 дней канал возвращает около трети вложений. Даже если LTV за год вдвое больше, канал не окупается.
+      - type: single
+        q: |
+          В июле доля платного трафика среди новых пользователей выросла с 30% до 50%, и общий W1 retention новых пользователей упал. Внутри каждого канала retention не изменился. Как это объяснить руководству?
+        options:
+          - Продукт стал хуже удерживать пользователей
+          - Изменился состав привлечения — выросла доля канала с более низким удержанием (эффект микса); продукт тут ни при чём
+          - Ошибка в данных
+          - Сезонность
+        answer: 1
+        explain: Это парадокс Симпсона в чистом виде. Хорошая подача — показать retention по каналам и долю каналов на одном графике.
+      - type: single
+        q: Какую рекомендацию по платному каналу дать на основе LTV/CAC ≈ 0.3?
+        options:
+          - Удвоить бюджет, чтобы ускорить рост
+          - Снизить ставки или сузить таргетинг на сегменты с лучшим удержанием, протестировать изменения на части бюджета и пересчитать LTV/CAC по когортам
+          - Полностью остановить весь маркетинг, включая реферальную программу
+          - Ничего не менять
+        answer: 1
+        explain: Решение — не «всё или ничего», а поиск сегментов, где канал окупается, с проверкой на когортах.
+
+  - id: trial.3
+    title: "Испытание III: эксперимент с подвохом"
+    summary: promo_banner — найти проблему, решить, что можно сказать, и что делать дальше.
+    intro: |
+      > [!note] Задача от продакта
+      > «Мы тестировали баннер с подборками в каталоге (promo_banner, 1–28 июля). Дашборд показывает рост добавлений в корзину. Можно катить?»
+    tasks:
+      - type: sql
+        q: |
+          Мы знаем, что в promo_banner есть SRM из-за Android. Проверь, что **без Android** (только iOS и web) сплит в порядке. Колонки: `n_a`, `n_b`, `chi2`.
+        tables: [experiment_users, users]
+        starter: |
+          WITH g AS (
+            SELECT COUNT(*) FILTER (WHERE e.grp = 'A') AS n_a,
+                   COUNT(*) FILTER (WHERE e.grp = 'B') AS n_b
+            FROM experiment_users e
+            JOIN users u USING (user_id)
+            WHERE e.experiment = 'promo_banner'
+          )
+          SELECT
+          FROM g
+        solution: |
+          WITH g AS (
+            SELECT COUNT(*) FILTER (WHERE e.grp = 'A') AS n_a,
+                   COUNT(*) FILTER (WHERE e.grp = 'B') AS n_b
+            FROM experiment_users e
+            JOIN users u USING (user_id)
+            WHERE e.experiment = 'promo_banner' AND u.platform <> 'android'
+          )
+          SELECT n_a, n_b,
+                 power(n_a - (n_a + n_b) / 2.0, 2) / ((n_a + n_b) / 2.0)
+                 + power(n_b - (n_a + n_b) / 2.0, 2) / ((n_a + n_b) / 2.0) AS chi2
+          FROM g
+        explain: Без Android χ² маленький — перекос целиком объясняется Android.
+      - type: sql
+        q: |
+          На подвыборке **iOS + web** посчитай долю участников, которые добавили товар в корзину (`add_to_cart`) с даты назначения до 28 июля включительно (`ts >= assigned_at AND ts < '2024-07-29'`), и z-статистику разницы долей. Колонки: `cr_a`, `cr_b`, `z`.
+        tables: [experiment_users, users, events]
+        starter: |
+          WITH p AS (
+            SELECT e.grp, e.user_id, e.assigned_at
+            FROM experiment_users e
+            JOIN users u USING (user_id)
+            WHERE e.experiment = 'promo_banner' AND u.platform <> 'android'
+          ),
+          c AS (
+            SELECT p.grp, p.user_id,
+                   MAX(CASE WHEN ev.event_name = 'add_to_cart' THEN 1 ELSE 0 END) AS carted
+            FROM p
+            LEFT JOIN events ev
+              ON ev.user_id = p.user_id AND ev.ts >= p.assigned_at AND ev.ts < '2024-07-29'
+            GROUP BY 1, 2
+          )
+          SELECT
+          FROM c
+        solution: |
+          WITH p AS (
+            SELECT e.grp, e.user_id, e.assigned_at
+            FROM experiment_users e
+            JOIN users u USING (user_id)
+            WHERE e.experiment = 'promo_banner' AND u.platform <> 'android'
+          ),
+          c AS (
+            SELECT p.grp, p.user_id,
+                   MAX(CASE WHEN ev.event_name = 'add_to_cart' THEN 1 ELSE 0 END) AS carted
+            FROM p
+            LEFT JOIN events ev
+              ON ev.user_id = p.user_id AND ev.ts >= p.assigned_at AND ev.ts < '2024-07-29'
+            GROUP BY 1, 2
+          ),
+          g AS (
+            SELECT AVG(carted) FILTER (WHERE grp = 'A') AS cr_a,
+                   AVG(carted) FILTER (WHERE grp = 'B') AS cr_b,
+                   COUNT(*) FILTER (WHERE grp = 'A') AS n_a,
+                   COUNT(*) FILTER (WHERE grp = 'B') AS n_b,
+                   AVG(carted) AS p
+            FROM c
+          )
+          SELECT cr_a, cr_b,
+                 (cr_b - cr_a) / sqrt(p * (1 - p) * (1.0 / n_a + 1.0 / n_b)) AS z
+          FROM g
+        explain: |
+          На чистой подвыборке эффект на добавления в корзину положительный, z ≈ 2 — на грани значимости при α = 0.05. Это и есть честный ответ: «есть сигнал, но тест нужно перезапустить с починенным логированием на всех платформах».
+      - type: single
+        q: Что ответить продакту по итогам?
+        options:
+          - Катить — дашборд показывает рост
+          - Результат на всех пользователях недостоверен из-за SRM (баг логирования на Android). На iOS и web сплит в порядке, и есть сигнал роста, но выборки мало. Рекомендация — починить логирование и перезапустить тест на всех платформах, с расчётом мощности
+          - Не катить никогда — тест провален
+          - Катить только на iOS
+        answer: 1
+        explain: Подвыборка без Android — диагностический анализ, не замена корректному тесту. Решение по продукту принимается после перезапуска.
+      - type: number
+        q: |
+          Для перезапуска: доля участников с добавлением в корзину — около 70%, хотим замечать относительный рост на 5% (до 73.5%), α = 0.05, мощность 80%. Сколько пользователей нужно **в каждую группу**? (z = 1.96 и 0.8416)
+        answer: 2594
+        tol: 0.02
+        explain: 7.849 · (0.7 · 0.3 + 0.735 · 0.265) / 0.035² = 7.849 · 0.4048 / 0.001225 ≈ 2 594 на группу. При высокой базовой доле тот же относительный эффект требует сравнительно немного трафика.
+      - type: multi
+        q: Каких ошибок стоит избежать при перезапуске?
+        options:
+          - Останавливать тест при первом p < 0.05
+          - Выбирать целевую метрику после того, как увидим результаты
+          - Заранее проверить логирование назначения на всех платформах (A/A или проверка SRM в первые дни)
+          - Катить на сегмент, где эффект оказался самым большим, без отдельной проверки
+        answer: [0, 1, 3]
+        explain: Проверка SRM в первые дни — правильная практика, а не ошибка. Остальное — подглядывание, HARKing и множественные сравнения.
+
+  - id: trial.4
+    title: "Испытание IV: модель оттока в прод"
+    summary: Модель, порог, оценка верхушки и план, как доказать эффект кампании.
+    intro: |
+      > [!note] Задача от CRM-команды
+      > «Хотим раз в неделю отправлять промокод клиентам, которые вот-вот уйдут. Сделай модель и скажи, кому отправлять и как мы поймём, что это работает».
+    tasks:
+      - type: python
+        q: |
+          Обучи `make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))` на `churn_features`: числовые признаки `num` плюс one-hot `platform` и `channel` (`pd.get_dummies(..., columns=['platform', 'channel'], dtype=float)`). Разбиение — `test_size=0.3, random_state=42, stratify=y`. Положи в `result` **PR AUC** (`average_precision_score`) на тесте.
+        tables: [churn_features]
+        packages: [scikit-learn]
+        starter: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+          from sklearn.metrics import average_precision_score
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X = pd.get_dummies(churn_features[num + ['platform', 'channel']], columns=['platform', 'channel'], dtype=float)
+          y = churn_features['churned']
+
+          result = ...
+        solution: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+          from sklearn.metrics import average_precision_score
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X = pd.get_dummies(churn_features[num + ['platform', 'channel']], columns=['platform', 'channel'], dtype=float)
+          y = churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+          model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)).fit(X_tr, y_tr)
+          result = average_precision_score(y_te, model.predict_proba(X_te)[:, 1])
+        test: |
+          assert abs(float(result) - float(expected)) < 0.01, f'PR AUC {float(result):.3f}, ожидалось ≈ {float(expected):.3f}'
+        explain: PR AUC сравнивают с долей положительного класса — это уровень случайной модели. Каналы и платформы добавляют немного сигнала, потому что платный трафик уходит чаще.
+      - type: python
+        q: |
+          Проверь **калибровку верхнего дециля**: для той же модели возьми 10% тестовых клиентов с наибольшей вероятностью и посчитай среднюю **предсказанную** вероятность и **фактическую** долю ушедших. Положи в `result` кортеж `(mean_pred, actual)`.
+        tables: [churn_features]
+        packages: [scikit-learn]
+        starter: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X = pd.get_dummies(churn_features[num + ['platform', 'channel']], columns=['platform', 'channel'], dtype=float)
+          y = churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+          model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)).fit(X_tr, y_tr)
+          proba = model.predict_proba(X_te)[:, 1]
+
+          result = ...
+        solution: |
+          from sklearn.model_selection import train_test_split
+          from sklearn.pipeline import make_pipeline
+          from sklearn.preprocessing import StandardScaler
+          from sklearn.linear_model import LogisticRegression
+
+          num = ['tenure_days', 'orders_90d', 'avg_check', 'days_since_last_order',
+                 'support_tickets', 'late_delivery_share', 'promo_share']
+          X = pd.get_dummies(churn_features[num + ['platform', 'channel']], columns=['platform', 'channel'], dtype=float)
+          y = churn_features['churned']
+          X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+          model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)).fit(X_tr, y_tr)
+          proba = model.predict_proba(X_te)[:, 1]
+          top = proba >= np.quantile(proba, 0.9)
+          result = (proba[top].mean(), y_te[top].mean())
+        test: |
+          assert isinstance(result, (tuple, list)) and len(result) == 2, 'result должен быть парой (mean_pred, actual)'
+          a, b = map(float, result)
+          ea, eb = map(float, expected)
+          assert abs(a - ea) < 0.02 and abs(b - eb) < 0.02, f'Получено ({a:.3f}, {b:.3f}), ожидалось ≈ ({ea:.3f}, {eb:.3f})'
+        explain: Если прогноз и факт близки, вероятности можно использовать в денежной формуле. Если модель систематически завышает, нужна калибровка (`CalibratedClassifierCV`), иначе ожидаемая прибыль кампании будет переоценена.
+      - type: number
+        q: |
+          Промокод стоит 150 ₽, удерживает 25% тех, кто иначе ушёл бы, удержанный клиент приносит 1 200 ₽ маржи. С какой вероятности оттока отправка окупается?
+        answer: 0.5
+        atol: 0.002
+        explain: 150 / (0.25 · 1200) = 0.5.
+      - type: single
+        q: Коллега предлагает добавить признак «число дней с последнего захода в приложение **на дату расчёта таргета**». Что скажешь?
+        options:
+          - Отличный признак, давность — самый сильный предиктор
+          - Это утечка — дата расчёта таргета лежит после среза; можно использовать только давность на дату среза
+          - Нужно его прологарифмировать
+          - Признак слишком дорогой в расчёте
+        answer: 1
+        explain: Признак из окна таргета «знает ответ». В проде на дату среза его не будет.
+      - type: single
+        q: Как доказать CRM-команде, что кампания работает?
+        options:
+          - Показать, что 60% получивших промокод сделали заказ
+          - Среди отобранных моделью клиентов случайно оставить holdout без промокода и сравнить удержание и маржу групп
+          - Показать высокий ROC AUC модели
+          - Сравнить отток в этом месяце с прошлым
+        answer: 1
+        explain: AUC говорит о качестве ранжирования, а не об эффекте промокода. Эффект меряется только рандомизированным сравнением.
+
+  - id: trial.5
+    title: "Испытание V: бесплатная доставка в Казани"
+    summary: От причинной оценки до денег и рекомендации — финальный кейс.
+    intro: |
+      > [!note] Задача от директора по продукту
+      > «Мы включили бесплатную доставку в Казани 15 апреля. Через месяц решаем, раскатывать ли её на другие города. Нужна оценка эффекта, экономика и рекомендация».
+    tasks:
+      - type: sql
+        q: |
+          Оцени эффект на конверсию `purchase / checkout` методом DiD с окнами **по 4 недели**: «до» — 18 марта – 14 апреля (`ts >= '2024-03-18' AND ts < '2024-04-15'`), «после» — 15 апреля – 12 мая (`ts >= '2024-04-15' AND ts < '2024-05-13'`). Контроль — остальные города. Колонки: `kazan_pre`, `kazan_post`, `other_pre`, `other_post`, `did`.
+        tables: [events, users]
+        starter: |
+          WITH e AS (
+            SELECT CASE WHEN u.city = 'Казань' THEN 'kazan' ELSE 'other' END AS g,
+                   CASE WHEN ev.ts < '2024-04-15' THEN 'pre' ELSE 'post' END AS period,
+                   ev.event_name
+            FROM events ev
+            JOIN users u USING (user_id)
+            WHERE ev.event_name IN ('checkout', 'purchase')
+              AND ev.ts >= '2024-03-18' AND ev.ts < '2024-05-13'
+          )
+          SELECT
+          FROM e
+        solution: |
+          WITH e AS (
+            SELECT CASE WHEN u.city = 'Казань' THEN 'kazan' ELSE 'other' END AS g,
+                   CASE WHEN ev.ts < '2024-04-15' THEN 'pre' ELSE 'post' END AS period,
+                   ev.event_name
+            FROM events ev
+            JOIN users u USING (user_id)
+            WHERE ev.event_name IN ('checkout', 'purchase')
+              AND ev.ts >= '2024-03-18' AND ev.ts < '2024-05-13'
+          ),
+          cr AS (
+            SELECT g, period,
+                   COUNT(*) FILTER (WHERE event_name = 'purchase') * 1.0
+                     / COUNT(*) FILTER (WHERE event_name = 'checkout') AS cr
+            FROM e
+            GROUP BY 1, 2
+          )
+          SELECT MAX(cr) FILTER (WHERE g = 'kazan' AND period = 'pre') AS kazan_pre,
+                 MAX(cr) FILTER (WHERE g = 'kazan' AND period = 'post') AS kazan_post,
+                 MAX(cr) FILTER (WHERE g = 'other' AND period = 'pre') AS other_pre,
+                 MAX(cr) FILTER (WHERE g = 'other' AND period = 'post') AS other_post,
+                 (MAX(cr) FILTER (WHERE g = 'kazan' AND period = 'post') - MAX(cr) FILTER (WHERE g = 'kazan' AND period = 'pre'))
+                 - (MAX(cr) FILTER (WHERE g = 'other' AND period = 'post') - MAX(cr) FILTER (WHERE g = 'other' AND period = 'pre')) AS did
+          FROM cr
+        explain: Оценка должна быть близка к той, что получилась на месячных окнах. Устойчивость к выбору окна — хороший знак.
+      - type: sql
+        q: |
+          Сколько **дополнительных покупок** дал запуск за 4 недели после него? Возьми число событий `checkout` в Казани за 15 апреля – 12 мая и умножь на DiD из прошлой задачи (используй тот же расчёт внутри запроса). Колонки: `kazan_checkouts`, `did`, `extra_purchases`.
+        tables: [events, users]
+        starter: |
+          -- Подсказка: возьми запрос из прошлой задачи как CTE и добавь подсчёт checkout в Казани после запуска
+          WITH e AS (
+            SELECT CASE WHEN u.city = 'Казань' THEN 'kazan' ELSE 'other' END AS g,
+                   CASE WHEN ev.ts < '2024-04-15' THEN 'pre' ELSE 'post' END AS period,
+                   ev.event_name
+            FROM events ev
+            JOIN users u USING (user_id)
+            WHERE ev.event_name IN ('checkout', 'purchase')
+              AND ev.ts >= '2024-03-18' AND ev.ts < '2024-05-13'
+          )
+          SELECT
+          FROM e
+        solution: |
+          WITH e AS (
+            SELECT CASE WHEN u.city = 'Казань' THEN 'kazan' ELSE 'other' END AS g,
+                   CASE WHEN ev.ts < '2024-04-15' THEN 'pre' ELSE 'post' END AS period,
+                   ev.event_name
+            FROM events ev
+            JOIN users u USING (user_id)
+            WHERE ev.event_name IN ('checkout', 'purchase')
+              AND ev.ts >= '2024-03-18' AND ev.ts < '2024-05-13'
+          ),
+          cr AS (
+            SELECT g, period,
+                   COUNT(*) FILTER (WHERE event_name = 'purchase') * 1.0
+                     / COUNT(*) FILTER (WHERE event_name = 'checkout') AS cr,
+                   COUNT(*) FILTER (WHERE event_name = 'checkout') AS checkouts
+            FROM e
+            GROUP BY 1, 2
+          ),
+          d AS (
+            SELECT (MAX(cr) FILTER (WHERE g = 'kazan' AND period = 'post') - MAX(cr) FILTER (WHERE g = 'kazan' AND period = 'pre'))
+                   - (MAX(cr) FILTER (WHERE g = 'other' AND period = 'post') - MAX(cr) FILTER (WHERE g = 'other' AND period = 'pre')) AS did,
+                   MAX(checkouts) FILTER (WHERE g = 'kazan' AND period = 'post') AS kazan_checkouts
+            FROM cr
+          )
+          SELECT kazan_checkouts, did, kazan_checkouts * did AS extra_purchases
+          FROM d
+        explain: Это оценка только канала «конверсия оплаты». Бесплатная доставка могла повлиять и на частоту визитов. Полную картину дал бы DiD на заказы на активного пользователя.
+      - type: number
+        q: |
+          Экономика за 4 недели: в Казани после запуска 250 заказов, из них около 11 — дополнительные благодаря запуску (оценка из прошлой задачи). Бесплатная доставка обходится в 150 ₽ на **каждый** заказ в Казани (раньше доставку оплачивал клиент). Маржа заказа без учёта доставки — 260 ₽. Каков чистый эффект запуска на маржу за 4 недели (₽)? Если отрицательный — со знаком минус.
+        answer: -34640
+        atol: 1
+        unit: ₽
+        explain: Дополнительная маржа — 11 · 260 = 2 860 ₽. Потери на доставке — 250 · 150 = 37 500 ₽. Итог — −34 640 ₽ за 4 недели. Конверсия выросла, а экономика ухудшилась — бесплатную доставку получают все, а дополнительных заказов она даёт немного.
+      - type: single
+        q: Какую рекомендацию дать директору?
+        options:
+          - Раскатывать на все города — конверсия выросла
+          - Не раскатывать в текущем виде. Эффект на конверсию есть, но в Казани он не окупает потери на доставке. Предлагаем протестировать варианты — бесплатная доставка от суммы заказа, только для новых пользователей, в подписке — с рандомизацией по городам или пользователям
+          - Отменить бесплатную доставку в Казани без анализа
+          - Подождать полгода и посмотреть ещё раз
+        answer: 1
+        explain: Решение опирается и на причинную оценку, и на экономику. Хорошая рекомендация — не только «нет», но и что попробовать вместо этого и как измерить.
+      - type: multi
+        q: Какие оговорки стоит включить в отчёт?
+        options:
+          - Оценка DiD опирается на параллельные тренды — показали pre-trends по неделям
+          - Не учтён возможный рост частоты визитов и долгосрочное удержание — эффект может быть недооценён
+          - Если одновременно в Казани происходило что-то ещё (конкурент, склад), оценка смещена
+          - Результат доказан с вероятностью 100%
+        answer: [0, 1, 2]
+        explain: Честный отчёт перечисляет предпосылки и ограничения. Это повышает доверие, а не снижает его.
