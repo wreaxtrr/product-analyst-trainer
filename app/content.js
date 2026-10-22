@@ -25,7 +25,8 @@ export async function loadCourse() {
   const files = await Promise.all(meta.files.map((f) => loadYaml(`content/${f}.yaml`)));
   const branches = {}, nodes = {};
   for (const f of files) {
-    const b = { id: f.branch, title: f.title, color: f.color || '#7aa2ff', nodes: [] };
+    // Ветку можно описать в нескольких файлах — узлы складываются в одну ветку.
+    const b = branches[f.branch] || { id: f.branch, title: f.title, color: f.color || '#7aa2ff', nodes: [] };
     branches[b.id] = b;
     for (const n of f.nodes || []) {
       if (nodes[n.id]) throw new Error(`Повтор id узла: ${n.id}`);

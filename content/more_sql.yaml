@@ -1,0 +1,191 @@
+branch: sql
+nodes:
+
+  - id: sql.advanced
+    title: "Продвинутый SQL: подытоги, списки, дедупликация"
+    summary: ROLLUP и GROUPING SETS, PIVOT, агрегаты в строки и массивы, рекурсивные CTE — то, что отличает мидла.
+    theory: |
+      ## Подытоги: ROLLUP, CUBE, GROUPING SETS
+
+      Нужен отчёт «выручка по городам и платформам + итог по каждому городу + общий итог». Можно склеить три запроса через `UNION ALL`, а можно одним:
+
+      ```sql
+      SELECT u.city, u.platform, SUM(o.revenue) AS revenue
+      FROM orders o JOIN users u USING (user_id)
+      WHERE o.status = 'delivered'
+      GROUP BY ROLLUP (u.city, u.platform)
+      ```
+
+      `ROLLUP (a, b)` = группировки `(a, b)`, `(a)` и `()`. В строках подытогов «свёрнутые» колонки равны NULL. Чтобы отличить такой NULL от настоящего, есть функция `GROUPING(col)` — она равна 1 в строке подытога.
+
+      - `CUBE (a, b)` — все комбинации: `(a, b)`, `(a)`, `(b)`, `()`.
+      - `GROUPING SETS ((a, b), (b), ())` — ровно те наборы, что перечислены.
+
+      ## PIVOT: строки в колонки
+
+      Универсальный способ — условная агрегация:
+
+      ```sql
+      SELECT u.city,
+             SUM(o.revenue) FILTER (WHERE u.platform = 'ios')     AS ios,
+             SUM(o.revenue) FILTER (WHERE u.platform = 'android') AS android,
+             SUM(o.revenue) FILTER (WHERE u.platform = 'web')     AS web
+      FROM orders o JOIN users u USING (user_id)
+      GROUP BY u.city
+      ```
+
+      В DuckDB и Snowflake есть оператор `PIVOT`, в ClickHouse — `sumIf`. Но условная агрегация работает везде, поэтому её знают наизусть.
+
+      ## Строки и списки из групп
+
+      | Задача | DuckDB / PostgreSQL | ClickHouse |
+      |---|---|---|
+      | Склеить значения в строку | `string_agg(x, ', ' ORDER BY y)` | `arrayStringConcat(groupArray(x), ', ')` |
+      | Собрать массив | `list(x)` / `array_agg(x)` | `groupArray(x)` |
+      | Развернуть массив в строки | `unnest(arr)` | `arrayJoin(arr)` |
+
+      Полезно для «путей пользователя»: `string_agg(event_name, ' → ' ORDER BY ts)` — последовательность действий в сессии.
+
+      ## Дедупликация
+
+      Три способа оставить одну строку на ключ:
+
+      ```sql
+      -- 1. Окно + фильтр (работает почти везде)
+      SELECT * FROM t QUALIFY ROW_NUMBER() OVER (PARTITION BY key ORDER BY ts DESC) = 1;
+      -- 2. PostgreSQL
+      SELECT DISTINCT ON (key) * FROM t ORDER BY key, ts DESC;
+      -- 3. ClickHouse
+      SELECT * FROM t ORDER BY ts DESC LIMIT 1 BY key;
+      ```
+
+      Главное — осознанно выбрать, **какую** строку оставить (первую, последнюю, с максимальной суммой), и сделать порядок детерминированным.
+
+      ## Рекурсивные CTE
+
+      Нужны для иерархий (категории, оргструктура, реферальные цепочки) и для генерации рядов там, где нет `generate_series`:
+
+      ```sql
+      WITH RECURSIVE days(d) AS (
+        SELECT DATE '2024-06-01'
+        UNION ALL
+        SELECT d + 1 FROM days WHERE d < DATE '2024-06-30'
+      )
+      SELECT d FROM days
+      ```
+
+      ## EXISTS и семи-джойны
+
+      `WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.user_id)` — «пользователи, у которых есть заказ». В отличие от JOIN, EXISTS не размножает строки. Это правильный инструмент, когда нужен фильтр, а не колонки второй таблицы.
+
+      > [!interview]
+      > На собеседованиях мидла любят «отчёт с подытогами одним запросом», «путь пользователя строкой» и «оставь последнюю версию записи». Если знаешь ROLLUP, string_agg и QUALIFY, эти задачи решаются в 3–5 строк.
+    sources:
+      - title: DuckDB — GROUPING SETS / ROLLUP / CUBE
+        url: https://duckdb.org/docs/sql/query_syntax/grouping_sets
+      - title: DuckDB — PIVOT
+        url: https://duckdb.org/docs/sql/statements/pivot
+      - title: PostgreSQL — WITH queries (recursive)
+        url: https://www.postgresql.org/docs/current/queries-with.html
+    tasks:
+      - type: sql
+        q: |
+          Одним запросом с `ROLLUP` построй выручку доставленных заказов **по городам** плюс общий итог. Колонки: `city` (NULL в строке итога), `revenue`.
+        tables: [orders, users]
+        starter: |
+          SELECT u.city, SUM(o.revenue) AS revenue
+          FROM orders o
+          JOIN users u USING (user_id)
+          WHERE o.status = 'delivered'
+          GROUP BY u.city
+        solution: |
+          SELECT u.city, SUM(o.revenue) AS revenue
+          FROM orders o
+          JOIN users u USING (user_id)
+          WHERE o.status = 'delivered'
+          GROUP BY ROLLUP (u.city)
+        explain: Строка с NULL в `city` — общий итог. В отчёте её удобно подписать через `COALESCE(u.city, 'Итого')` или `CASE WHEN GROUPING(u.city) = 1 THEN 'Итого' END`.
+      - type: sql
+        q: |
+          Сделай **PIVOT**: для каждого города — число доставленных заказов на каждой платформе. Колонки строго в порядке: `city`, `ios`, `android`, `web`.
+        tables: [orders, users]
+        starter: |
+          SELECT u.city
+          FROM orders o
+          JOIN users u USING (user_id)
+          WHERE o.status = 'delivered'
+          GROUP BY u.city
+        solution: |
+          SELECT u.city,
+                 COUNT(*) FILTER (WHERE u.platform = 'ios') AS ios,
+                 COUNT(*) FILTER (WHERE u.platform = 'android') AS android,
+                 COUNT(*) FILTER (WHERE u.platform = 'web') AS web
+          FROM orders o
+          JOIN users u USING (user_id)
+          WHERE o.status = 'delivered'
+          GROUP BY u.city
+        explain: Условная агрегация — переносимый способ PIVOT. Явный список колонок удобнее для витрин, чем динамический PIVOT, потому что схема результата не зависит от данных.
+      - type: sql
+        q: |
+          Для каждой категории товаров выведи **три самых просматриваемых** `item_id` (по числу `view_item` за всё время) одной строкой через `', '` в порядке убывания просмотров (при равенстве — по возрастанию `item_id`). Колонки: `category`, `top_items`.
+        tables: [events, items]
+        starter: |
+          WITH v AS (
+            SELECT i.category, e.item_id, COUNT(*) AS views
+            FROM events e
+            JOIN items i ON i.item_id = e.item_id
+            WHERE e.event_name = 'view_item'
+            GROUP BY 1, 2
+          )
+          SELECT
+        solution: |
+          WITH v AS (
+            SELECT i.category, e.item_id, COUNT(*) AS views
+            FROM events e
+            JOIN items i ON i.item_id = e.item_id
+            WHERE e.event_name = 'view_item'
+            GROUP BY 1, 2
+          ),
+          r AS (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY category ORDER BY views DESC, item_id) AS rn
+            FROM v
+          )
+          SELECT category, string_agg(item_id::VARCHAR, ', ' ORDER BY rn) AS top_items
+          FROM r
+          WHERE rn <= 3
+          GROUP BY category
+        explain: Сначала топ-N через окно, потом склейка с явным порядком внутри агрегата. Без `ORDER BY` внутри `string_agg` порядок элементов не гарантирован.
+      - type: sql
+        q: |
+          Восстанови **путь пользователя** с `user_id = 10` в день его регистрации: все его события этого дня по времени одной строкой через `' → '`. Колонки: `user_id`, `path`.
+        tables: [events, users]
+        starter: |
+          SELECT e.user_id
+          FROM events e
+          JOIN users u USING (user_id)
+          WHERE e.user_id = 10
+        solution: |
+          SELECT e.user_id, string_agg(e.event_name, ' → ' ORDER BY e.ts, e.event_id) AS path
+          FROM events e
+          JOIN users u USING (user_id)
+          WHERE e.user_id = 10 AND e.ts::DATE = u.signup_date
+          GROUP BY e.user_id
+        explain: Такие «пути» помогают увидеть типичные сценарии и места, где люди бросают сессию. Для массового анализа пути считают по всем пользователям и группируют по одинаковым последовательностям.
+      - type: single
+        q: Что вернёт `GROUP BY GROUPING SETS ((city, platform), (city), ())`?
+        options:
+          - Только группировку по городу и платформе
+          - Строки по городу и платформе, подытоги по городам и общий итог
+          - Все комбинации, включая итог по платформам без городов
+          - Ошибку — так писать нельзя
+        answer: 1
+        explain: GROUPING SETS возвращает ровно перечисленные наборы. Это то же самое, что `ROLLUP (city, platform)`. CUBE добавил бы ещё и подытог по платформам без городов.
+      - type: single
+        q: Нужны пользователи, у которых есть хотя бы один заказ, и **никаких колонок из заказов не требуется**. Что надёжнее всего?
+        options:
+          - "`SELECT u.* FROM users u JOIN orders o USING (user_id)`"
+          - "`SELECT u.* FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.user_id)`"
+          - "`SELECT u.* FROM users u LEFT JOIN orders o USING (user_id)`"
+          - "`SELECT u.* FROM users u CROSS JOIN orders o`"
+        answer: 1
+        explain: JOIN повторит пользователя столько раз, сколько у него заказов. EXISTS — семи-джойн, каждая строка users попадает в результат не больше одного раза.

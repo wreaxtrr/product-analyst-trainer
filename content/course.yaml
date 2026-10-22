@@ -3,7 +3,8 @@
 # side: true — боковая ветка: открывается испытанием прошлого акта ИЛИ уровнем level.
 title: Product Analyst Trainer
 scenarios: scenarios
-files: [sql, stats, metrics, unit, ab, python, ml, ds, causal, viz, product, interview, trials]
+files: [sql, more_sql, stats, more_stats, metrics, unit, ab, more_ab, python, ml, more_ml, ds, more_ds, causal, viz, product, more_product, data, interview, trials]
+deep: []
 acts:
   - id: a1
     title: Акт I — Фундамент
@@ -20,7 +21,7 @@ acts:
     summary: Оконные функции, когорты, воронки, дерево метрик и юнит-экономика.
     tracks:
       - branch: sql
-        nodes: [sql.windows, sql.dates, sql.funnels]
+        nodes: [sql.windows, sql.dates, sql.funnels, sql.advanced]
       - branch: metrics
         nodes: [metrics.activity, metrics.retention, metrics.funnel, metrics.tree]
       - branch: unit
@@ -32,9 +33,9 @@ acts:
     summary: Проверка гипотез и A/B-тесты — от дизайна и мощности до CUPED и разбора на реальных данных.
     tracks:
       - branch: stats
-        nodes: [stats.hypo, stats.tests]
+        nodes: [stats.hypo, stats.tests, stats.bayes]
       - branch: ab
-        nodes: [ab.design, ab.power, ab.srm, ab.peeking, ab.multiple, ab.ratio, ab.cuped, ab.analysis]
+        nodes: [ab.design, ab.power, ab.srm, ab.peeking, ab.multiple, ab.ratio, ab.cuped, ab.analysis, ab.longterm]
     trial: trial.3
 
   - id: a4
@@ -44,11 +45,11 @@ acts:
       - branch: python
         nodes: [py.pandas, py.cohorts, py.stats]
       - branch: ml
-        nodes: [ml.framing, ml.linear, ml.metrics, ml.validation, ml.trees]
+        nodes: [ml.framing, ml.linear, ml.metrics, ml.validation, ml.trees, ml.design]
       - branch: ds
         side: true
         level: 7
-        nodes: [ds.churn, ds.forecast, ds.uplift]
+        nodes: [ds.churn, ds.forecast, ds.uplift, ds.segmentation, ds.text]
       - branch: causal
         side: true
         level: 7
@@ -61,10 +62,12 @@ acts:
 
   - id: a5
     title: Акт V — Аналитик целиком
-    summary: Разбор инцидентов, приоритизация, продуктовые кейсы и подготовка к собеседованию.
+    summary: Инциденты, цены, приоритизация, хранилище данных и ClickHouse, продуктовые кейсы и подготовка к собеседованию.
     tracks:
       - branch: product
-        nodes: [product.drop, product.prioritize, product.casestudy]
+        nodes: [product.drop, product.prioritize, product.pricing, product.casestudy]
+      - branch: data
+        nodes: [data.modeling, data.quality, data.clickhouse]
       - branch: interview
         nodes: [interview.sql, interview.stats]
     trial: trial.5

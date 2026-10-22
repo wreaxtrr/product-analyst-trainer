@@ -1,6 +1,7 @@
 import { html, useState, useMemo } from '../lib.js';
 import { Widget, Slider, Select, Readouts, Plot, path, makeRng, mean, sd, quantile, fmt, pct, int, Phi, invPhi, tQuantile, C, niceTicks } from './kit.js';
 import { getData, dayToDate, END_DAY } from '../data/generate.js';
+import { MORE_WIDGETS } from './more.js';
 
 // ═════ 1. Распределения и выборочный шум ═════
 const DISTS = {
@@ -447,6 +448,7 @@ function Cohort() {
 }
 
 export const WIDGETS = {
+  ...MORE_WIDGETS,
   sampling: Sampling,
   convergence: Convergence,
   'ci-coverage': CiCoverage,
