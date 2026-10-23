@@ -1,6 +1,6 @@
 branch: unit
 title: Юнит-экономика
-color: "#ffcb6b"
+color: "#b8994a"
 nodes:
 
   - id: unit.revenue

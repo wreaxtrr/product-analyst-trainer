@@ -30,6 +30,7 @@ export function Stars({ n, max = 3 }) {
 }
 
 const ICONS = {
+  course: 'M4 19.5A2.5 2.5 0 0 1 6.5 17H20 M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z',
   map: 'M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z M9 3v15 M15 6v15',
   sandbox: 'M4 5h16v14H4z M8 9l3 3-3 3 M13 15h4',
   metrics: 'M4 20V10 M10 20V4 M16 20v-7 M22 20H2',
@@ -45,11 +46,11 @@ export function Icon({ name, size = 18 }) {
 
 const NAV = [
   ['/', 'Карта', 'map'],
+  ['/course', 'Курс', 'course'],
   ['/practice', 'Практика', 'practice'],
   ['/metrics', 'Метрики', 'metrics'],
   ['/sandbox', 'Песочница', 'sandbox'],
   ['/progress', 'Прогресс', 'progress'],
-  ['/settings', 'Настройки', 'settings'],
 ];
 
 export function MiniRing({ value, max, size = 30 }) {
@@ -77,6 +78,7 @@ export function Header({ route, dueCount, xp }) {
           <${MiniRing} value=${into} max=${XP_PER_LEVEL} /><span>LVL <span class="lvl-num">${lvl}</span></span>
         </a>
         <button class="icon-btn" onClick=${() => dispatchEvent(new CustomEvent('open-palette'))} title="Поиск (Ctrl+K)" aria-label="Поиск">⌕</button>
+        <a class="icon-btn" href="#/settings" title="Настройки" aria-label="Настройки"><${Icon} name="settings" size=${15} /></a>
         <button class="icon-btn" onClick=${cycleTheme} title=${`Тема: ${theme === 'system' ? 'как в системе' : theme}`} aria-label="Переключить тему">◐</button>
       </div>
     </header>

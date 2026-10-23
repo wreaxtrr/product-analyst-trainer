@@ -1,6 +1,6 @@
 branch: ab
 title: A/B-тесты
-color: "#c792ea"
+color: "#9580cc"
 nodes:
 
   - id: ab.design

@@ -5,17 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Product Analyst Trainer</title>
   <meta name="description" content="Тренажёр продуктового аналитика: SQL, статистика, A/B-тесты, продуктовые метрики, Python, ML и Data Science.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2314161c'/%3E%3Cpath d='M7 23l6-7 5 4 7-10' stroke='%235ad1a0' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236c9ef8'/%3E%3Cpath d='M7 23l6-7 5 4 7-10' stroke='%23ffffff' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Manrope:wght@400;500;600;700;800&family=Unbounded:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <link rel="stylesheet" href="styles.css">
   <script>
     (function () {
       try {
         var s = JSON.parse(localStorage.getItem('pat-progress-v1') || '{}');
-        var t = (s.settings && s.settings.theme) || 'dark';
+        var t = (s.settings && s.settings.theme) || 'system';
         if (t === 'system') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
         document.documentElement.dataset.theme = t;
         if (s.settings && s.settings.fx === false) document.documentElement.classList.add('no-fx');

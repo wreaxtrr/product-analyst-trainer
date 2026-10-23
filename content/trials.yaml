@@ -1,6 +1,6 @@
 branch: trials
 title: Испытания
-color: "#f2c66d"
+color: "#b8994a"
 nodes:
 
   - id: trial.1

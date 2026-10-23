@@ -1,6 +1,6 @@
 branch: python
 title: Python для аналитика
-color: "#89ddff"
+color: "#4f9cc0"
 nodes:
 
   - id: py.pandas

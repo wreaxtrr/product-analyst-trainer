@@ -1,6 +1,6 @@
 branch: data
 title: Данные и хранилище
-color: "#38bdf8"
+color: "#4d9fa5"
 nodes:
 
   - id: data.modeling

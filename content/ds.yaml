@@ -1,6 +1,6 @@
 branch: ds
 title: Data Science кейсы
-color: "#ff9cac"
+color: "#b97ba3"
 nodes:
 
   - id: ds.churn

@@ -1,6 +1,6 @@
 branch: interview
 title: Подготовка к собеседованию
-color: "#c792ea"
+color: "#9a88cc"
 nodes:
 
   - id: interview.sql

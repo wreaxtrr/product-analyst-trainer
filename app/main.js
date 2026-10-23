@@ -7,6 +7,7 @@ import { MapPage } from './ui/map.js';
 import { NodePage } from './ui/node.js';
 import { PracticePage } from './ui/practice.js';
 import { CommandPalette } from './ui/palette.js';
+import { CoursePage } from './ui/course.js';
 import { ProgressPage, SettingsPage, MetricsPage, SandboxPage, SelfTestPage, GlossaryPage, dueKeys } from './ui/pages.js';
 
 // Конфетти при прохождении узла — короткая анимация на canvas.
@@ -18,7 +19,7 @@ function Celebrate({ info, onClose }) {
     const ctx = cv.getContext('2d');
     const dpr = devicePixelRatio || 1;
     cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
-    const colors = ['#22d3ee', '#818cf8', '#f472b6', '#fbbf24', '#34d399'];
+    const colors = ['#6c9ef8', '#a58bf0', '#4cb88a', '#d6a64a', '#e07a7a'];
     const fx = getState().settings.fx !== false && !matchMedia('(prefers-reduced-motion: reduce)').matches;
     const parts = fx ? Array.from({ length: 140 }, () => ({
       x: innerWidth / 2, y: innerHeight / 2.4, vx: (Math.random() - 0.5) * 14, vy: -Math.random() * 13 - 3,
@@ -71,6 +72,8 @@ function App() {
   let page;
   if (!p0) page = html`<${MapPage} />`;
   else if (p0 === 'node') page = html`<${NodePage} key=${p1 + (route.query.tab || '')} id=${p1} tab=${route.query.tab} />`;
+  else if (p0 === 'course') page = html`<${CoursePage} key=${p1 || 'program'} tab=${p1 || 'program'} />`;
+  else if (p0 === 'dashboards') page = html`<${CoursePage} key="dashboards" tab="dashboards" />`;
   else if (p0 === 'practice') page = html`<${PracticePage} key=${p1 || 'today'} tab=${p1 || 'today'} />`;
   else if (p0 === 'review') page = html`<${PracticePage} key="review" tab="review" />`;
   else if (p0 === 'progress') page = html`<${ProgressPage} />`;

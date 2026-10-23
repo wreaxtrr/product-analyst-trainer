@@ -64,10 +64,11 @@ function Hero({ s }) {
 function short(t, n = 24) { return t.length > n ? t.slice(0, n - 1) + '…' : t; }
 
 function ActConstellation({ act, s, next }) {
-  const W = 1000, laneH = 78, top = 34;
+  const W = 1000, laneH = 84, top = 40;
   const H = top + act.tracks.length * laneH + 10;
   const maxLen = Math.max(...act.tracks.map((t) => t.nodes.length));
   const x0 = 190, xTrial = 940, step = (xTrial - x0 - 130) / Math.max(1, maxLen - 1);
+  const dense = step < 135; // подписи соседних узлов налезают — чередуем сверху и снизу
   const trial = course.nodes[act.trial];
   const ty = top + (act.tracks.length * laneH) / 2 - laneH / 2 + 18;
   const tSt = nodeStats(trial, s);
@@ -88,16 +89,16 @@ function ActConstellation({ act, s, next }) {
       stars.push(html`<g class=${cls('cs-node', state, next && next.id === id && 'next')} onClick=${() => navigate(`/node/${id}`)} role="link" tabindex="0" aria-label=${n.title}>
         <title>${n.title}${st.done ? ` — пройдено, ${st.stars}★` : open ? ` — ${st.solved}/${st.total}` : ' — закрыто'}</title>
         ${next && next.id === id && html`<circle class="halo" cx=${x} cy=${y} r="20" fill=${b.color} />`}
-        <circle class="core" cx=${x} cy=${y} r="13" fill=${st.done ? b.color : 'var(--card-solid)'} stroke=${state === 'locked' ? 'var(--line2)' : b.color} stroke-width="2" style=${st.done ? { filter: `drop-shadow(0 0 8px ${b.color})` } : {}} />
-        ${st.done ? html`<text x=${x} y=${y + 4} text-anchor="middle" style="fill:#04111a;font-weight:800;font-size:11px">${st.stars}★</text>` : html`<text x=${x} y=${y + 4} text-anchor="middle" style=${{ fill: state === 'locked' ? 'var(--faint)' : b.color, fontWeight: 700, fontSize: '10.5px', fontFamily: 'var(--mono)' }}>${state === 'locked' ? '·' : `${st.solved}/${st.total}`}</text>`}
-        <text x=${x} y=${y + 31} text-anchor="middle">${short(n.title, 22)}</text>
+        <circle class="core" cx=${x} cy=${y} r="13" fill=${st.done ? b.color : 'var(--card-solid)'} stroke=${state === 'locked' ? 'var(--line2)' : b.color} stroke-width="2" />
+        ${st.done ? html`<text x=${x} y=${y + 4} text-anchor="middle" style="fill:#fff;font-weight:700;font-size:10.5px">${st.stars}★</text>` : html`<text x=${x} y=${y + 4} text-anchor="middle" style=${{ fill: state === 'locked' ? 'var(--faint)' : b.color, fontWeight: 700, fontSize: '10.5px', fontFamily: 'var(--mono)' }}>${state === 'locked' ? '·' : `${st.solved}/${st.total}`}</text>`}
+        <text x=${x} y=${dense && i % 2 ? y - 20 : y + 31} text-anchor="middle">${short(n.title, dense ? 21 : 22)}</text>
       </g>`);
     });
   });
   stars.push(html`<g class=${cls('cs-node', tSt.done ? 'done' : tOpen ? 'open' : 'locked')} onClick=${() => navigate(`/node/${trial.id}`)} role="link" aria-label=${trial.title}>
     <title>${trial.title}</title>
     <polygon points=${[0, 1, 2, 3, 4].map((k) => { const a = -Math.PI / 2 + (k * 2 * Math.PI) / 5; const a2 = a + Math.PI / 5; return `${xTrial + 22 * Math.cos(a)},${ty + 22 * Math.sin(a)} ${xTrial + 10 * Math.cos(a2)},${ty + 10 * Math.sin(a2)}`; }).join(' ')}
-      fill=${tSt.done ? 'var(--warn)' : 'var(--card-solid)'} stroke="var(--warn)" stroke-width="2" style=${tSt.done ? { filter: 'drop-shadow(0 0 10px var(--warn))' } : {}} />
+      fill=${tSt.done ? 'var(--warn)' : 'var(--card-solid)'} stroke="var(--warn)" stroke-width="2" />
     <text x=${xTrial} y=${ty + 40} text-anchor="middle" style="font-weight:700">Испытание</text>
   </g>`);
   return html`<div class="constellation"><svg class="tree-svg" viewBox=${`0 0 ${W} ${H}`}>${edges}${stars}</svg></div>`;
@@ -113,7 +114,7 @@ export function MapPage() {
     <div class="page-head">
       <div>
         <h1 class="grad">Карта навыков</h1>
-        <p class="muted">Пять актов от SQL до уровня мидла. Ветки внутри акта идут параллельно, между актами — испытания. Боковые ветки открываются испытанием или уровнем. Поиск по всему курсу — <a href="#" onClick=${(e) => { e.preventDefault(); dispatchEvent(new CustomEvent('open-palette')); }}>Ctrl+K</a>, термины — в <a href="#/glossary">глоссарии</a>.</p>
+        <p class="muted">Пять актов от SQL до уровня мидла. Ветки внутри акта идут параллельно, между актами — испытания. Боковые ветки открываются испытанием или уровнем. <a href="#/course/program">Программа курса</a> — результаты и время по актам. Поиск по всему курсу — <a href="#" onClick=${(e) => { e.preventDefault(); dispatchEvent(new CustomEvent('open-palette')); }}>Ctrl+K</a>, термины — в <a href="#/glossary">глоссарии</a>.</p>
       </div>
     </div>
     <${Hero} s=${s} />
@@ -140,7 +141,7 @@ export function MapPage() {
             const tdone = tr.nodes.filter((id) => nodeStats(course.nodes[id], s).done).length;
             return html`<div class="track">
               <div class="track-head">
-                <span class="dot" style=${{ background: b.color, color: b.color }} />
+                <span class="dot" style=${{ background: b.color }} />
                 <span class="track-title">${b.title}</span>
                 ${tr.side && html`<span class="badge">боковая</span>`}
                 <span class="track-prog"><${Bar} value=${tdone} max=${tr.nodes.length} color=${b.color} /><span class="muted small">${tdone}/${tr.nodes.length}</span></span>

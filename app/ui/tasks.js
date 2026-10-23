@@ -4,7 +4,7 @@ import { taskKey, nodeStats } from '../content.js';
 import { recordAttempt, recordReview, recordPractice, setDraft, getState, useStore } from '../store.js';
 import { runSql, compareResults, sqlReady, fmtCell, resetDb } from '../engines/sql.js';
 import { runPython, pyStarted } from '../engines/py.js';
-import { SCHEMA, TABLE_DOCS, mulberry32 } from '../data/generate.js';
+import { SCHEMA, TABLE_DOCS, COLUMN_VALUES, mulberry32 } from '../data/generate.js';
 
 export function toast(text) { dispatchEvent(new CustomEvent('toast', { detail: text })); }
 
@@ -233,9 +233,13 @@ export function SchemaPanel({ tables, open = false }) {
       ${names.map((t) => html`<div class="schema-row">
         <div class="schema-name">${t}</div>
         <div><div class="schema-doc">${TABLE_DOCS[t] || ''}</div>
-          <code class="schema-cols">${(SCHEMA[t] || []).map(([c, ty]) => `${c} ${ty}`).join(', ')}</code></div>
+          <div class="schema-cols">${(SCHEMA[t] || []).map(([c, ty]) => {
+            const vals = COLUMN_VALUES[`${t}.${c}`];
+            return html`<div class="schema-col"><code>${c}</code> <span class="schema-type">${ty}</span>${vals ? html`<span class="schema-vals">${vals.map((v) => html`<code class="val">${v === 'NULL' || /^\d+$/.test(v) ? v : `'${v}'`}</code>`)}</span>` : ''}</div>`;
+          })}</div></div>
       </div>`)}
     </div>
+    <div class="hint">Значения строк чувствительны к регистру: <code>'ios'</code> и <code>'iOS'</code> — разные строки. Проверить, что лежит в колонке: <code>SELECT DISTINCT platform FROM users</code>.</div>
   </details>`;
 }
 

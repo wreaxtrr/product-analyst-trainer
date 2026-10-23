@@ -1,6 +1,6 @@
 branch: product
 title: Продуктовое мышление
-color: "#f78c6c"
+color: "#c78d5f"
 nodes:
 
   - id: product.drop

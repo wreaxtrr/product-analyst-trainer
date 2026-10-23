@@ -10,7 +10,8 @@ function fresh() {
   return {
     v: 1, xp: 0, tasks: {}, srs: {}, days: [], drafts: {}, scen: {},
     practice: {}, train: null, exams: [], drills: { solved: 0, tried: 0, streak: 0, best: 0 },
-    settings: { theme: 'dark', free: false, fx: true },
+    notes: {}, project: {}, profile: { name: '' },
+    settings: { theme: 'system', free: false, fx: true },
   };
 }
 
@@ -19,7 +20,7 @@ function load() {
     const s = JSON.parse(localStorage.getItem(KEY) || 'null');
     if (s && s.v === 1) {
       const f = fresh();
-      return { ...f, ...s, drills: { ...f.drills, ...(s.drills || {}) }, settings: { ...f.settings, ...(s.settings || {}) } };
+      return { ...f, ...s, drills: { ...f.drills, ...(s.drills || {}) }, profile: { ...f.profile, ...(s.profile || {}) }, settings: { ...f.settings, ...(s.settings || {}) } };
     }
   } catch (e) { /* пустой или битый localStorage — начинаем заново */ }
   return fresh();
@@ -159,6 +160,30 @@ export function setDraft(key, code) {
   update((s) => { s.drafts = { ...s.drafts, [key]: code }; });
 }
 
+// Заметки к урокам: пустая строка удаляет заметку.
+export function setNote(id, text) {
+  update((s) => {
+    const notes = { ...s.notes };
+    if (text.trim()) notes[id] = { text, at: Date.now() };
+    else delete notes[id];
+    s.notes = notes;
+  });
+}
+
+// Чек-лист итогового проекта: ключ — id пункта.
+export function toggleProject(id) {
+  update((s) => {
+    const p = { ...s.project };
+    if (p[id]) delete p[id]; else p[id] = Date.now();
+    s.project = p;
+    markDay(s);
+  });
+}
+
+export function setProfile(k, v) {
+  update((s) => { s.profile = { ...s.profile, [k]: v }; });
+}
+
 export function setSetting(k, v) {
   update((s) => { s.settings = { ...s.settings, [k]: v }; });
   if (k === 'theme') applyTheme();
@@ -200,6 +225,7 @@ export function importJson(text) {
 }
 
 export function resetAll() {
-  const settings = state.settings;
-  update((s) => { Object.assign(s, fresh(), { settings }); });
+  // Заметки и имя — то, что человек написал сам, — сброс прогресса не трогает.
+  const { settings, notes, profile } = state;
+  update((s) => { Object.assign(s, fresh(), { settings, notes, profile }); });
 }

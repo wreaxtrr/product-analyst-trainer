@@ -1,6 +1,6 @@
 branch: metrics
 title: Продуктовые метрики
-color: "#f78c6c"
+color: "#c98a5a"
 nodes:
 
   - id: metrics.activity

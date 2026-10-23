@@ -102,4 +102,4 @@ export function path(points, sx, sy) {
   return d;
 }
 
-export const C = { a: '#7aa2ff', b: '#f07178', c: '#5ad1a0', d: '#f2c66d', e: '#c792ea' };
+export const C = { a: '#6c9ef8', b: '#e07a7a', c: '#4cb88a', d: '#d6a64a', e: '#a58bf0' };

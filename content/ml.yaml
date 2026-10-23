@@ -1,6 +1,6 @@
 branch: ml
 title: ML для аналитика
-color: "#f07178"
+color: "#c86b78"
 nodes:
 
   - id: ml.framing

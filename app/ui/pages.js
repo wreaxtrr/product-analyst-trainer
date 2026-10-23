@@ -59,7 +59,7 @@ function Heatmap({ days }) {
   return html`<div class="heatmap">${cells.map((d) => html`<span class=${cls('hm', set.has(d) && 'on')} title=${d} />`)}</div>`;
 }
 
-const SKILLS = [
+export const SKILLS = [
   ['SQL', ['sql']], ['Статистика', ['stats']], ['Метрики', ['metrics', 'unit']], ['A/B-тесты', ['ab']],
   ['Python', ['python']], ['ML', ['ml']], ['Data Science', ['ds']], ['Причинность', ['causal']],
   ['Продукт', ['product', 'viz']], ['Данные', ['data']], ['Собеседование', ['interview', 'trials']],
@@ -78,10 +78,10 @@ function Radar({ s }) {
   const pt = (i, r) => { const a = -Math.PI / 2 + (2 * Math.PI * i) / k; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; };
   const poly = vals.map(([, v], i) => pt(i, R * Math.max(0.02, v)).join(',')).join(' ');
   return html`<svg class="radar chart" viewBox=${`0 0 ${W} ${H}`} role="img" aria-label="Радар навыков">
-    <defs><linearGradient id="radarFill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee" stop-opacity="0.45" /><stop offset="1" stop-color="#f472b6" stop-opacity="0.35" /></linearGradient></defs>
+    
     ${[0.25, 0.5, 0.75, 1].map((f) => html`<polygon points=${vals.map((_, i) => pt(i, R * f).join(',')).join(' ')} fill="none" stroke="var(--line2)" stroke-dasharray=${f < 1 ? '3 4' : ''} />`)}
     ${vals.map((_, i) => { const [x, y] = pt(i, R); return html`<line x1=${cx} y1=${cy} x2=${x} y2=${y} stroke="var(--line)" />`; })}
-    <polygon points=${poly} fill="url(#radarFill)" stroke="var(--accent)" stroke-width="2" style="filter:drop-shadow(0 0 8px rgba(34,211,238,.5))" />
+    <polygon points=${poly} fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2" />
     ${vals.map(([name, v], i) => { const [x, y] = pt(i, R + 26); return html`<text x=${x} y=${y} text-anchor="middle">${name} · ${Math.round(100 * v)}%</text>`; })}
   </svg>`;
 }

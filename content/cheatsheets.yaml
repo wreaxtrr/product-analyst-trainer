@@ -1,0 +1,223 @@
+# Шпаргалки: короткие выжимки, которые держат открытыми во время работы и перед собеседованием.
+# Каждая — markdown. Показываются на странице «Курс → Шпаргалки», печатаются в две колонки.
+sheets:
+  - id: sql
+    title: SQL — порядок, ловушки, шаблоны
+    md: |
+      **Логический порядок выполнения:** FROM → JOIN → WHERE → GROUP BY → HAVING → оконные функции → SELECT → DISTINCT → ORDER BY → LIMIT. Поэтому псевдоним из SELECT нельзя использовать в WHERE, а оконную функцию — в WHERE и GROUP BY (оберни в CTE).
+
+      **Перед любым запросом:** `SELECT * FROM t LIMIT 10`, `SELECT col, COUNT(*) FROM t GROUP BY col` — какие значения и в каком регистре лежат.
+
+      **Ловушки**
+      - `COUNT(col)` не считает NULL, `COUNT(*)` — считает.
+      - `col = NULL` всегда «не истина» — пиши `col IS NULL`.
+      - JOIN «один ко многим» размножает строки: сумма после него завышена. Сначала агрегируй, потом соединяй.
+      - Условие на правую таблицу LEFT JOIN в WHERE превращает его в INNER. Переноси в ON.
+      - Целочисленное деление: `1/2 = 0` в некоторых СУБД. Пиши `1.0 * a / b`.
+      - Деление на ноль: `a / NULLIF(b, 0)`.
+
+      **Шаблоны**
+      ```sql
+      -- топ-N в каждой группе
+      SELECT * FROM (
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY city ORDER BY revenue DESC) AS rn
+        FROM t) WHERE rn <= 3;
+
+      -- дедупликация: последняя запись на ключ
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY order_id ORDER BY ts DESC) = 1
+
+      -- нарастающий итог и скользящее среднее
+      SUM(x) OVER (ORDER BY dt)
+      AVG(x) OVER (ORDER BY dt ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)
+
+      -- изменение к прошлому периоду
+      x / LAG(x) OVER (ORDER BY week) - 1
+      ```
+
+      **Даты (DuckDB):** `ts::DATE`, `date_trunc('week', ts)`, `date_diff('day', a, b)`, `ts + INTERVAL 7 DAY`, `strftime(ts, '%Y-%m')`, `extract(dow FROM ts)`.
+
+  - id: retention
+    title: SQL — когорты, retention, воронка
+    md: |
+      ```sql
+      -- retention по неделям от регистрации
+      WITH a AS (
+        SELECT u.user_id, date_trunc('week', u.signup_date) AS cohort,
+               date_diff('day', u.signup_date, e.ts::DATE) // 7 AS wk
+        FROM users u JOIN events e USING (user_id)
+      )
+      SELECT cohort, wk,
+             COUNT(DISTINCT user_id) * 1.0
+               / FIRST_VALUE(COUNT(DISTINCT user_id)) OVER (PARTITION BY cohort ORDER BY wk) AS ret
+      FROM a WHERE wk >= 0 GROUP BY cohort, wk ORDER BY cohort, wk;
+      ```
+      Первая неделя должна быть 100%. Если нет — кто-то из когорты не имеет событий в неделю 0.
+
+      ```sql
+      -- воронка: шаг засчитывается, только если был предыдущий
+      SELECT COUNT(DISTINCT CASE WHEN v THEN user_id END) AS view,
+             COUNT(DISTINCT CASE WHEN v AND c THEN user_id END) AS cart,
+             COUNT(DISTINCT CASE WHEN v AND c AND p THEN user_id END) AS purchase
+      FROM (
+        SELECT user_id,
+               bool_or(event_name = 'view_item')   AS v,
+               bool_or(event_name = 'add_to_cart') AS c,
+               bool_or(event_name = 'purchase')    AS p
+        FROM events GROUP BY user_id);
+      ```
+      Строгая воронка учитывает и порядок по времени: `MIN(ts)` шага N больше `MIN(ts)` шага N−1.
+
+  - id: pandas
+    title: pandas — то, что пишешь каждый день
+    md: |
+      ```python
+      df = pd.read_csv('orders.csv', parse_dates=['ts'])
+      df.info(); df.describe(); df['status'].value_counts(dropna=False)
+
+      df[(df.status == 'delivered') & df.promo_code.isna()]
+      df.query("revenue > 1000 and status == 'delivered'")
+
+      (df.groupby('user_id')
+         .agg(orders=('order_id', 'count'), gmv=('revenue', 'sum'))
+         .reset_index())
+
+      df.merge(users, on='user_id', how='left', validate='many_to_one')
+      df.pivot_table(index='cohort', columns='week', values='user_id', aggfunc='nunique')
+
+      df['week'] = df.ts.dt.to_period('W').dt.start_time
+      df.set_index('ts').resample('D')['revenue'].sum()
+      df['rank'] = df.groupby('city')['revenue'].rank(ascending=False)
+      df['prev'] = df.groupby('user_id')['ts'].shift()
+      ```
+      - `validate=` в merge ловит размножение строк сразу.
+      - `value_counts(dropna=False)` показывает пропуски.
+      - Цепочки методов в скобках читаются лучше промежуточных переменных.
+      - После groupby почти всегда нужен `reset_index()`.
+
+  - id: stats
+    title: Статистика — какой тест когда
+    md: |
+      | Данные | Тест | В Python |
+      |---|---|---|
+      | Доли (конверсия) | z-тест для двух долей, χ² | statsmodels `proportions_ztest`, scipy `chi2_contingency` |
+      | Средние, большие выборки | t-тест Уэлча | `ttest_ind(a, b, equal_var=False)` |
+      | Тяжёлые хвосты, выбросы | бутстрап разницы средних | `bootstrap` |
+      | «Сдвиг распределения» | Манн–Уитни | `mannwhitneyu` |
+      | Отношение (средний чек) | дельта-метод или бутстрап | вручную |
+      | Таблица сопряжённости | χ² | `chi2_contingency` |
+      | До/после на тех же людях | парный t-тест | `ttest_rel` |
+
+      **Формулы**
+      - SE среднего: $s/\sqrt{n}$; SE доли: $\sqrt{p(1-p)/n}$.
+      - 95% ДИ: оценка $\pm 1.96 \cdot SE$.
+      - SE разницы: $\sqrt{SE_A^2 + SE_B^2}$.
+      - Размер выборки на группу для долей: $n \approx \dfrac{2(z_{1-\alpha/2} + z_{1-\beta})^2 \, p(1-p)}{\delta^2}$; при α = 0.05 и мощности 80% множитель $(1.96 + 0.84)^2 \approx 7.85$.
+
+      **p-value** — вероятность увидеть такую же или более сильную разницу, *если эффекта нет*. Это не вероятность того, что гипотеза верна, и не размер эффекта.
+
+      **Мощность** — вероятность найти эффект, если он есть. Маленькая выборка + незначимый результат = «не знаем», а не «эффекта нет».
+
+  - id: ab
+    title: A/B-тест — чек-листы
+    md: |
+      **Дизайн (до запуска)**
+      1. Гипотеза: «если X, то метрика Y вырастет, потому что Z».
+      2. Целевая метрика + guardrails (отмены, скорость, жалобы).
+      3. Единица рандомизации = единица анализа (обычно пользователь).
+      4. MDE, α, мощность → размер выборки → длительность, кратная неделе.
+      5. Заранее записать правило решения.
+
+      **Анализ (после)**
+      1. **SRM:** χ² на размеры групп. Перекос → не смотреть метрики, искать баг.
+      2. Метрики считаются с даты назначения пользователя.
+      3. Эффект + 95% ДИ, а не только p-value.
+      4. Ratio-метрики (чек, CTR) — дельта-метод или бутстрап по пользователям.
+      5. Guardrails не ухудшились.
+      6. Сегменты — только как гипотезы для новых тестов.
+
+      **Ошибки**
+      - Подглядывание и остановка «как только значимо» — раздувает ложные срабатывания.
+      - 20 метрик × α = 0.05 ≈ одна ложная находка. Поправка Холма или одна главная метрика.
+      - Новизна: эффект первых дней часто затухает.
+
+      **CUPED:** $Y' = Y - \theta (X - \bar X)$, $\theta = \mathrm{cov}(X, Y) / \mathrm{var}(X)$, $X$ — та же метрика до теста. Дисперсия падает в $1/(1-\rho^2)$ раз.
+
+  - id: metrics
+    title: Продуктовые метрики — формулы
+    md: |
+      | Метрика | Формула |
+      |---|---|
+      | DAU / WAU / MAU | уникальные активные за день / неделю / месяц |
+      | Stickiness | DAU / MAU |
+      | Retention дня N | вернулись в день N / размер когорты |
+      | Rolling retention N | активны в день N или позже / когорта |
+      | Churn rate | ушли за период / были в начале периода |
+      | Конверсия | дошли до шага / начали |
+      | ARPU | выручка / все активные |
+      | ARPPU | выручка / платящие |
+      | AOV (средний чек) | выручка / заказы |
+      | LTV | маржа на клиента за всё время, ≈ ARPU × маржа / churn |
+      | CAC | расходы на привлечение / новые клиенты |
+      | Payback | месяцев, пока накопленная маржа ≥ CAC |
+      | ROMI | (доход − расходы) / расходы |
+
+      **Разложение выручки:** GMV = активные × конверсия в покупку × заказов на покупателя × средний чек. Каждый множитель — отдельный драйвер со своей командой.
+
+      **Хорошая North Star:** отражает ценность для клиента, растёт вместе с выручкой, на неё влияют команды, считается каждую неделю. Для «Корзинки» — покупатели за неделю.
+
+  - id: drop
+    title: Метрика упала — алгоритм разбора
+    md: |
+      1. **Правда ли упала?** Сломанные данные, поздняя загрузка, смена определения, праздник, день недели.
+      2. **Насколько и с какого момента?** Сравни с тем же днём прошлых недель, найди точку перелома.
+      3. **Внешнее или внутреннее?** Сезонность, конкуренты, погода, маркетинг против релизов и инцидентов.
+      4. **Разложи метрику** на множители (трафик × конверсия × чек) — какой сдвинулся?
+      5. **Сегменты:** платформа, версия, город, канал, новые/старые. Падение в одном сегменте — почти всегда технический инцидент.
+      6. **Воронка** в проблемном сегменте — на каком шаге потеря.
+      7. **Вывод + действие + оценка ущерба** в деньгах.
+
+      > Пример из курса: 14 мая заказов на Android стало в разы меньше обычного, iOS и web в норме, а конверсия оформления в оплату обвалилась только на Android → сломался платёжный шаг в приложении.
+
+  - id: ml
+    title: ML для аналитика
+    md: |
+      **Постановка:** что предсказываем, на какую дату, какие данные есть *на момент* прогноза, какое действие примем по прогнозу.
+
+      | Задача | Метрика |
+      |---|---|
+      | Классификация, редкий класс | PR-AUC, precision/recall на пороге |
+      | Ранжирование клиентов | ROC-AUC, lift в топ-N% |
+      | Регрессия | MAE (устойчива), RMSE (штрафует большие ошибки), MAPE |
+      | Прогноз временного ряда | MAE/MAPE на отложенном периоде в будущем |
+      | Uplift | Qini / uplift в топ-N% |
+
+      ```python
+      from sklearn.model_selection import train_test_split, cross_val_score
+      from sklearn.pipeline import make_pipeline
+      from sklearn.preprocessing import StandardScaler
+      from sklearn.linear_model import LogisticRegression
+      from sklearn.metrics import roc_auc_score
+
+      X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.25, stratify=y, random_state=0)
+      model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
+      print(cross_val_score(model, X_tr, y_tr, cv=5, scoring='roc_auc').mean())
+      model.fit(X_tr, y_tr)
+      print(roc_auc_score(y_te, model.predict_proba(X_te)[:, 1]))
+      ```
+      **Утечки:** признак, известный только после таргета; масштабирование на всех данных до разбиения; случайное разбиение временных данных. Подозрительно высокое качество — сначала ищи утечку.
+
+  - id: interview
+    title: Собеседование — как отвечать
+    md: |
+      **Продуктовый кейс** («как оценить фичу X», «упала метрика Y»):
+      1. Уточни цель и контекст: что за продукт, кто пользователь, что значит успех.
+      2. Предложи метрику успеха + guardrails.
+      3. Как измерить: A/B, если можно; если нельзя — DiD, синтетический контроль, до/после с оговорками.
+      4. Риски и что может пойти не так.
+      5. Решение: при каком результате что делаем.
+
+      **SQL вслух:** проговори зерно таблицы (одна строка = что?), напиши CTE по шагам, проверь на дубли и NULL, назови сложность и альтернативы.
+
+      **Статистика:** определение своими словами + пример из продукта + типичная ошибка. «p-value — это…, его часто путают с…».
+
+      **Вопрос «расскажите о проекте»:** ситуация → задача → что сделал *ты* → результат в цифрах → чему научился. Итоговый проект курса — готовый ответ.

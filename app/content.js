@@ -115,6 +115,26 @@ export function allNodesOrdered() {
   return out.map((id) => course.nodes[id]);
 }
 
+// Оценка времени на узел: чтение теории (~100 слов в минуту — текст плотный, с формулами, кодом и виджетами)
+// плюс задачи по типу. Округляется до 5 минут.
+const TASK_MIN = { single: 2, multi: 3, number: 4, order: 3, case: 8, sql: 10, python: 12 };
+export function estimateMinutes(node) {
+  const words = String(node.theory || '').split(/\s+/).filter(Boolean).length;
+  const tasks = node.tasks.reduce((a, t) => a + (TASK_MIN[t.type] || 3), 0);
+  return Math.max(10, Math.round((words / 100 + tasks) / 5) * 5);
+}
+
+export function fmtDuration(min) {
+  if (min < 60) return `${min} мин`;
+  const h = Math.floor(min / 60), m = min % 60;
+  return m ? `${h} ч ${m} мин` : `${h} ч`;
+}
+
+// Заголовки второго уровня теории — «что внутри урока».
+export function outline(node) {
+  return [...String(node.theory || '').matchAll(/^## (.+)$/gm)].map((m) => m[1].replace(/[*`]/g, '').trim());
+}
+
 export function findTask(key) {
   const [id, i] = key.split('#');
   const node = course.nodes[id];

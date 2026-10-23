@@ -1,6 +1,6 @@
 branch: causal
 title: Причинность без A/B
-color: "#c3e88d"
+color: "#83a862"
 nodes:
 
   - id: causal.confounding

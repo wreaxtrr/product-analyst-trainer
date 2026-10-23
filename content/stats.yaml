@@ -1,6 +1,6 @@
 branch: stats
 title: Статистика с нуля
-color: "#7aa2ff"
+color: "#6b8fd6"
 nodes:
 
   - id: stats.noise

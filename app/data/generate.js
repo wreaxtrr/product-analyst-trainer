@@ -82,6 +82,30 @@ export const TABLE_DOCS = {
   delivery_fee_test: 'Рандомизированный тест платы за доставку: клиенты случайно получили плату 0, 99 или 199 ₽; заказы и GMV (без платы за доставку) за 30 дней.',
 };
 
+// Возможные значения текстовых колонок — показываются в схеме данных над редактором,
+// чтобы не гадать, как именно записано значение (регистр, язык, формат).
+export const COLUMN_VALUES = {
+  'users.platform': ['ios', 'android', 'web'],
+  'users.city': ['Москва', 'Санкт-Петербург', 'Казань', 'Екатеринбург', 'Новосибирск', 'Краснодар'],
+  'users.channel': ['organic', 'ads', 'referral'],
+  'items.category': ['Овощи и фрукты', 'Молочные продукты', 'Мясо и рыба', 'Выпечка', 'Напитки', 'Снеки', 'Бытовая химия', 'Готовая еда'],
+  'events.event_name': ['app_open', 'view_item', 'add_to_cart', 'checkout', 'purchase'],
+  'orders.status': ['delivered', 'cancelled'],
+  'orders.promo_code': ['WELCOME', 'SALE10', 'NULL'],
+  'experiment_users.experiment': ['new_checkout', 'promo_banner'],
+  'experiment_users.grp': ['A', 'B'],
+  'marketing_spend.channel': ['ads', 'referral'],
+  'churn_features.platform': ['ios', 'android', 'web'],
+  'churn_features.channel': ['organic', 'ads', 'referral'],
+  'churn_features.churned': ['0', '1'],
+  'promo_campaign.treatment': ['0', '1'],
+  'promo_campaign.converted': ['0', '1'],
+  'reviews.rating': ['1', '2', '3', '4', '5'],
+  'payments.provider': ['card', 'sbp', 'applepay'],
+  'payments.status': ['success', 'failed', 'refunded'],
+  'delivery_fee_test.fee': ['0', '99', '199'],
+};
+
 const CATEGORIES = ['Овощи и фрукты', 'Молочные продукты', 'Мясо и рыба', 'Выпечка', 'Напитки', 'Снеки', 'Бытовая химия', 'Готовая еда'];
 const CITIES = [['Москва', 0.35], ['Санкт-Петербург', 0.2], ['Казань', 0.12], ['Екатеринбург', 0.12], ['Новосибирск', 0.11], ['Краснодар', 0.1]];
 const PLATFORMS = [['ios', 0.38], ['android', 0.47], ['web', 0.15]];
