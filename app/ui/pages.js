@@ -60,9 +60,9 @@ function Heatmap({ days }) {
 }
 
 export const SKILLS = [
-  ['SQL', ['sql']], ['Статистика', ['stats']], ['Метрики', ['metrics', 'unit']], ['A/B-тесты', ['ab']],
+  ['SQL', ['sql']], ['Статистика', ['stats']], ['Метрики', ['metrics', 'unit', 'growth']], ['A/B-тесты', ['ab']],
   ['Python', ['python']], ['ML', ['ml']], ['Data Science', ['ds']], ['Причинность', ['causal']],
-  ['Продукт', ['product', 'viz']], ['Данные', ['data']], ['Собеседование', ['interview', 'trials']],
+  ['Продукт', ['product', 'viz', 'voc', 'monitoring']], ['Данные', ['data', 'eng']], ['Собеседование', ['interview', 'trials']],
 ];
 
 function Radar({ s }) {

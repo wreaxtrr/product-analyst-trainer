@@ -4,7 +4,7 @@ import { navigate } from '../router.js';
 
 // Командная палитра: Ctrl+K (или /) — поиск по урокам, их теории и страницам.
 const PAGES = [
-  ['Карта навыков', '/'], ['Программа курса', '/course/program'], ['Итоговый проект', '/course/project'],
+  ['Карта навыков', '/'], ['Программа курса', '/course/program'], ['Уровень Middle: матрица компетенций', '/course/middle'], ['Итоговый проект', '/course/project'],
   ['Примеры дашбордов', '/course/dashboards'], ['Шпаргалки и мои заметки', '/course/cheats'], ['Сертификат', '/course/cert'],
   ['Тренировка дня', '/practice'], ['Повторение', '/practice/review'], ['Пробный экзамен', '/practice/exam'],
   ['SQL-марафон', '/practice/marathon'], ['Тренажёр выбора метрик', '/metrics'], ['Песочница SQL и Python', '/sandbox'],

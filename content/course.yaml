@@ -4,7 +4,7 @@
 title: Product Analyst Trainer
 scenarios: scenarios
 glossary: glossary
-files: [sql, more_sql, stats, more_stats, metrics, more_metrics, unit, ab, more_ab, python, ml, more_ml, ds, more_ds, causal, viz, product, more_product, data, interview, trials]
+files: [sql, more_sql, stats, more_stats, metrics, more_metrics, unit, growth, ab, more_ab, monitoring, python, ml, more_ml, ds, more_ds, causal, viz, product, more_product, data, interview, voc, eng, trials]
 deep: [sql, stats, metrics, unit, ab, python, ml, ds, causal, viz, product, interview, extra]
 acts:
   - id: a1
@@ -30,6 +30,7 @@ acts:
       - "Считать DAU/WAU/MAU, stickiness, retention и читать когортные таблицы"
       - "Раскладывать North Star в дерево метрик и находить драйвер, который сдвинулся"
       - "Считать ARPU, ARPPU, LTV, CAC, окупаемость и сравнивать модели атрибуции"
+      - "В боковой ветке — искать метрику активации, читать кривую L28 и прогнозировать MAU через когорты"
     tracks:
       - branch: sql
         nodes: [sql.windows, sql.dates, sql.funnels, sql.advanced]
@@ -37,6 +38,10 @@ acts:
         nodes: [metrics.activity, metrics.retention, metrics.funnel, metrics.tree, metrics.attribution]
       - branch: unit
         nodes: [unit.revenue, unit.ltv]
+      - branch: growth
+        side: true
+        level: 4
+        nodes: [growth.activation, growth.engagement, growth.model]
     trial: trial.2
 
   - id: a3
@@ -47,11 +52,16 @@ acts:
       - "Проектировать A/B-тест: целевая и guardrail-метрики, MDE, мощность, размер выборки, длительность"
       - "Ловить SRM, peeking и множественные сравнения; считать ratio-метрики дельта-методом"
       - "Снижать дисперсию через CUPED и писать вывод эксперимента, по которому принимают решение"
+      - "В боковой ветке — строить бейзлайны, ловить аномалии робастным z-score и разбирать алерт до причины"
     tracks:
       - branch: stats
         nodes: [stats.hypo, stats.tests, stats.bayes]
       - branch: ab
         nodes: [ab.design, ab.power, ab.srm, ab.peeking, ab.multiple, ab.ratio, ab.cuped, ab.analysis, ab.longterm]
+      - branch: monitoring
+        side: true
+        level: 6
+        nodes: [mon.baselines, mon.anomaly, mon.rootcause]
     trial: trial.3
 
   - id: a4
@@ -89,6 +99,7 @@ acts:
       - "Оценивать ценовые изменения, приоритизировать гипотезы и говорить со стейкхолдерами"
       - "Понимать модель данных хранилища, контроль качества и особенности ClickHouse"
       - "Решать типовые SQL- и стат-задачи собеседования и продуктовые кейсы"
+      - "В боковых ветках — Airflow, инкрементальные витрины, dbt, BI; опросы, отзывы и качественные исследования"
     tracks:
       - branch: product
         nodes: [product.drop, product.prioritize, product.pricing, product.stakeholders, product.casestudy]
@@ -96,4 +107,12 @@ acts:
         nodes: [data.modeling, data.quality, data.clickhouse]
       - branch: interview
         nodes: [interview.sql, interview.stats]
+      - branch: eng
+        side: true
+        level: 9
+        nodes: [eng.pipelines, eng.incremental, eng.dbt, eng.bi]
+      - branch: voc
+        side: true
+        level: 9
+        nodes: [voc.surveys, voc.reviews, voc.research]
     trial: trial.5

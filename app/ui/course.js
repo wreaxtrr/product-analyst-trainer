@@ -8,7 +8,7 @@ import { Dashboards } from './dashboards.js';
 import { getCsv, SCHEMA, TABLE_DOCS } from '../data/generate.js';
 import { navigate } from '../router.js';
 
-const TABS = [['program', 'Программа'], ['project', 'Итоговый проект'], ['dashboards', 'Дашборды'], ['cheats', 'Шпаргалки'], ['cert', 'Сертификат']];
+const TABS = [['program', 'Программа'], ['middle', 'Уровень Middle'], ['project', 'Итоговый проект'], ['dashboards', 'Дашборды'], ['cheats', 'Шпаргалки'], ['cert', 'Сертификат']];
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI'];
 
 export function CoursePage({ tab = 'program' }) {
@@ -19,6 +19,7 @@ export function CoursePage({ tab = 'program' }) {
       ${TABS.map(([k, title]) => html`<button role="tab" class=${cls('tab', t === k && 'active')} onClick=${() => navigate(`/course/${k}`)}>${title}</button>`)}
     </div>
     ${t === 'program' && html`<${Program} />`}
+    ${t === 'middle' && html`<${Middle} />`}
     ${t === 'project' && html`<${Project} />`}
     ${t === 'dashboards' && html`<${Dashboards} />`}
     ${t === 'cheats' && html`<${Cheats} />`}
@@ -43,7 +44,7 @@ function Program() {
   return html`
     <div class="eyebrow">Продуктовый аналитик · Junior → Middle</div>
     <h1>Программа курса</h1>
-    <p class="lead" style="max-width:760px">Пять актов: от SQL по логам до A/B-тестов, ML и разбора продуктовых кейсов. Всё на данных одного вымышленного сервиса доставки продуктов «Корзинка» — с реальными инцидентами, экспериментами и грязными данными, как на работе.</p>
+    <p class="lead" style="max-width:760px">Пять актов и боковые главы: от SQL по логам до A/B-тестов, ML, пайплайнов и разбора продуктовых кейсов — до уровня Middle (<a href="#/course/middle">что это значит</a>). Всё на данных одного вымышленного сервиса доставки продуктов «Корзинка» — с реальными инцидентами, экспериментами и грязными данными, как на работе.</p>
     <div class="stat-row">
       <div class="stat"><div class="stat-v">${nodes.length}</div><div class="stat-l">уроков и испытаний</div></div>
       <div class="stat"><div class="stat-v">${tasks}</div><div class="stat-l">задач, из них ${code} с кодом и ${cases} ${plural(cases, 'кейс', 'кейса', 'кейсов')}</div></div>
@@ -108,6 +109,104 @@ function Program() {
     <div class="syllabus-act">
       <h2>Финал</h2>
       <p style="margin:0">После пяти актов — <a href="#/course/project">итоговый проект</a> на всех данных «Корзинки»: от аудита данных до рекомендаций руководителю. Он закрывает вопрос «а что ты делал руками?» на собеседовании. Когда испытания пройдены, открывается <a href="#/course/cert">сертификат</a>.</p>
+    </div>`;
+}
+
+// ═════════════ Уровень Middle ═════════════
+// Матрица компетенций: что ждут от джуна и мидла и какие ветки курса это закрывают.
+const COMPETENCIES = [
+  { name: 'SQL', branches: ['sql'], extra: ['interview.sql', 'data.clickhouse'],
+    jun: 'SELECT, JOIN, GROUP BY по готовой постановке', mid: 'Оконные функции, когорты, воронки, дедупликация, быстрые запросы в ClickHouse; сам проверяет данные перед расчётом' },
+  { name: 'Статистика', branches: ['stats'], extra: ['interview.stats'],
+    jun: 'Среднее, медиана, знает, что такое p-value', mid: 'Выбирает критерий под данные, считает интервалы и мощность, бутстрап, байесовский подход' },
+  { name: 'A/B-тесты', branches: ['ab'],
+    jun: 'Считает результат готового теста', mid: 'Дизайн, MDE и длительность, SRM, ratio-метрики, CUPED, подглядывание, вывод с решением' },
+  { name: 'Метрики и рост', branches: ['metrics', 'unit', 'growth'],
+    jun: 'Считает DAU, конверсию, retention', mid: 'Дерево метрик и North Star, юнит-экономика, активация, вовлечённость, модель роста' },
+  { name: 'Python', branches: ['python'],
+    jun: 'Базовый pandas', mid: 'pandas и scipy для анализа, когорты, воспроизводимые ноутбуки' },
+  { name: 'ML и Data Science', branches: ['ml', 'ds'],
+    jun: 'Знает термины', mid: 'Ставит ML-задачу, честно валидирует, отток, uplift, прогноз, сегментация' },
+  { name: 'Причинность без A/B', branches: ['causal'],
+    jun: '«Корреляция — не причинность»', mid: 'DiD, RDD, синтетический контроль, гео-эксперименты' },
+  { name: 'Данные и пайплайны', branches: ['data'], extra: ['eng.pipelines', 'eng.incremental', 'eng.dbt'],
+    jun: 'Пишет запросы к готовым таблицам', mid: 'Витрины и качество данных, Airflow, инкремент и поздние данные, dbt и тесты, git' },
+  { name: 'Дашборды, BI, мониторинг', branches: ['viz', 'monitoring'], extra: ['eng.bi'],
+    jun: 'Строит график по просьбе', mid: 'Дашборды под решения, семантический слой, алерты без шума, разбор инцидента до причины' },
+  { name: 'Продукт и коммуникация', branches: ['product', 'voc'],
+    jun: 'Отвечает на поставленный вопрос', mid: 'Сам формулирует и приоритизирует гипотезы, работает со стейкхолдерами, опросами и исследователями' },
+];
+
+// Ветки, добавленные последними, — помечаются на странице, чтобы их было легко найти.
+const NEW_SIDE = ['growth', 'monitoring', 'eng', 'voc'];
+
+function competencyNodes(c) {
+  return allNodesOrdered().filter((n) => !n.isTrial && (c.branches.includes(n.branch) || (c.extra || []).includes(n.id)));
+}
+
+function solvedShare(nodes, s) {
+  let total = 0, ok = 0;
+  for (const n of nodes) n.tasks.forEach((_, i) => { total++; const t = s.tasks[taskKey(n.id, i)]; if (t && t.solved) ok++; });
+  return total ? ok / total : 0;
+}
+
+function Middle() {
+  const s = useStore();
+  const rows = COMPETENCIES.map((c) => { const nodes = competencyNodes(c); return { ...c, nodes, share: solvedShare(nodes, s) }; });
+  const trials = course.acts.filter((a) => nodeStats(course.nodes[a.trial], s).done).length;
+  const full = s.exams.filter((e) => e.fmt === 'full').map((e) => e.score / (e.total || 1));
+  const bestFull = full.length ? Math.max(...full) : null;
+  const projDone = Object.keys(s.project).length;
+  const weakest = [...rows].sort((a, b) => a.share - b.share)[0];
+  const checks = [
+    [trials === course.acts.length, `Пройдены все испытания актов (${trials} из ${course.acts.length})`, '#/course/program'],
+    [rows.every((r) => r.share >= 0.7), `Каждая компетенция закрыта хотя бы на 70% задач (слабее всего — ${weakest.name}, ${Math.round(100 * weakest.share)}%)`, null],
+    [bestFull !== null && bestFull >= 0.8, `Полный мок-интервью на 80% и выше (${bestFull === null ? 'ещё не было' : `лучший результат ${Math.round(100 * bestFull)}%`})`, '#/practice/exam'],
+    [projDone >= 20, `Итоговый проект: готово не меньше 20 из 24 пунктов (сейчас ${projDone})`, '#/course/project'],
+  ];
+  const ready = Math.round((100 * checks.filter((c) => c[0]).length) / checks.length);
+  const sides = Object.values(course.branches).filter((b) => course.acts.some((a) => a.tracks.some((tr) => tr.side && tr.branch === b.id)));
+  return html`
+    <div class="eyebrow">Цель курса</div>
+    <h1>Уровень Middle</h1>
+    <p class="lead" style="max-width:780px">Грейд в каждой компании определяют по-своему, но ожидания от мидл-продуктового аналитика похожи: ведёт задачу сам — от вопроса продакта до решения, не ждёт точной постановки, отвечает за метрики своего направления. Ниже — что именно для этого нужно уметь, где это в курсе и сколько ты уже закрыл.</p>
+
+    <div class="syllabus-act">
+      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">
+        <h2 style="margin:0">Как подтвердить уровень</h2><span class=${cls('badge big', ready === 100 && 'ok')}>${ready}% готовности</span>
+      </div>
+      <ul class="check-list" style="margin-top:10px">${checks.map(([ok, text, href]) => html`<li style="display:flex;gap:10px;align-items:baseline">
+        <span style=${{ color: ok ? 'var(--good)' : 'var(--faint)', width: '14px', flex: 'none' }}>${ok ? '✓' : '○'}</span>
+        ${href ? html`<a href=${href}>${text}</a>` : html`<span>${text}</span>`}</li>`)}</ul>
+    </div>
+
+    <h2>Матрица компетенций</h2>
+    <p class="muted" style="max-width:780px">Составлена по типичным требованиям вакансий продуктового аналитика уровня Middle: уверенный SQL, Python, статистика и A/B-тесты, продуктовые метрики, а также всё чаще — Airflow, ClickHouse и BI-инструменты.</p>
+    <div class="table-wrap"><table class="rubric">
+      <thead><tr><th>Компетенция</th><th>Junior</th><th>Middle</th><th>Уроков</th><th style="min-width:130px">Решено задач</th></tr></thead>
+      <tbody>${rows.map((r) => html`<tr>
+        <td>${r.name}</td><td class="muted">${r.jun}</td><td>${r.mid}</td><td>${r.nodes.length}</td>
+        <td><${Bar} value=${Math.round(100 * r.share)} max=${100} /><span class="small muted">${Math.round(100 * r.share)}%</span></td>
+      </tr>`)}</tbody>
+    </table></div>
+
+    <h2>Боковые главы</h2>
+    <p class="muted" style="max-width:780px">Не обязательны для испытаний, но закрывают то, что всё чаще спрашивают у мидлов. Открываются после испытания предыдущего акта или по уровню — или сразу в свободном режиме.</p>
+    <div class="syllabus-grid">${sides.map((b) => {
+      const done = b.nodes.filter((id) => nodeStats(course.nodes[id], s).done).length;
+      return html`<div class="milestone" style="margin-top:0">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline"><h3 style=${{ color: b.color }}>${b.title}${NEW_SIDE.includes(b.id) ? html` <span class="badge ok-soft" style="vertical-align:middle">новая</span>` : ''}</h3><span class="badge">${done}/${b.nodes.length}</span></div>
+        <ul class="syllabus-lessons">${b.nodes.map((id) => html`<li><a class="t" href=${`#/node/${id}`}>${course.nodes[id].title}</a><span class="m">${fmtDuration(estimateMinutes(course.nodes[id]))}</span></li>`)}</ul>
+      </div>`;
+    })}</div>
+
+    <div class="callout callout-warn" style="margin-top:22px"><div class="callout-title">Чего курс не заменит</div>
+      <ul style="margin:4px 0 0;padding-left:20px">
+        <li>Опыт с живыми стейкхолдерами и ответственность за решения, от которых зависят деньги.</li>
+        <li>Знание конкретного домена и инфраструктуры компании — её хранилища, платформы экспериментов, процессов.</li>
+        <li>Строчку «2–3 года опыта» в резюме. Её частично заменяет итоговый проект и умение подробно о нём рассказать.</li>
+      </ul>
+      <p style="margin:8px 0 0">Курс даёт знания и навыки, которые проверяют на собеседовании на мидла. Формальный грейд присваивает работодатель. Реалистичный план — откликаться на Junior+ и Middle с итоговым проектом в портфолио и через полгода–год работы подтвердить грейд.</p>
     </div>`;
 }
 
