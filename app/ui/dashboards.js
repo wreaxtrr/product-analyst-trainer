@@ -121,7 +121,7 @@ function WeeklyExec() {
 function OpsDaily() {
   const D = prepare();
   const [d, setD] = useState(134); // 14 мая — день поломки Android
-  const days = Array.from({ length: END_DAY - 13 }, (_, i) => i + 14);
+  const days = Array.from({ length: END_DAY - 27 }, (_, i) => i + 28); // для бейзлайна нужны 4 прошлые недели
   const baseline = (arr, dd) => { const v = [7, 14, 21, 28].map((l) => arr[dd - l]).sort((a, b) => a - b); return (v[1] + v[2]) / 2; };
   const rows = [3, 0, 1, 2].map((k) => {
     const orders = D.dayOrders[k][d], base = baseline(D.dayOrders[k], d);

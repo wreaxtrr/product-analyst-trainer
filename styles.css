@@ -243,7 +243,7 @@ code, pre, .code-editor { font-family: var(--mono); font-variant-ligatures: none
 .md li::marker { color: var(--faint); }
 .md h2 { font-size: 20px; margin: 34px 0 12px; padding-top: 6px; }
 .md h3 { font-size: 16px; margin: 24px 0 8px; }
-.md code { padding: 1px 5px; border-radius: 5px; background: var(--code-bg); border: 1px solid var(--line); font-size: 0.86em; }
+.md code { padding: 1px 5px; border-radius: 5px; background: var(--code-bg); border: 1px solid var(--line); font-size: 0.86em; overflow-wrap: anywhere; }
 .md pre code, .explain pre code { padding: 0; border: none; background: none; }
 pre.code { position: relative; margin: 0 0 14px; padding: 13px 15px; border-radius: 10px; background: var(--code-bg); border: 1px solid var(--line); overflow-x: auto; font-size: 13px; line-height: 1.6; }
 pre.code[data-lang]::after { content: attr(data-lang); position: absolute; top: 6px; right: 10px; font-size: 10.5px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; }

@@ -220,7 +220,15 @@ export function exportJson() { return JSON.stringify(state, null, 2); }
 export function importJson(text) {
   const s = JSON.parse(text);
   if (!s || s.v !== 1 || typeof s.tasks !== 'object') throw new Error('Это не файл прогресса тренажёра.');
-  update((st) => { Object.assign(st, fresh(), s); });
+  // Файл мог быть выгружен старой версией — недостающие поля и настройки берутся по умолчанию.
+  const f = fresh();
+  update((st) => {
+    Object.assign(st, f, s, {
+      drills: { ...f.drills, ...(s.drills || {}) },
+      profile: { ...f.profile, ...(s.profile || {}) },
+      settings: { ...f.settings, ...(s.settings || {}) },
+    });
+  });
   applyTheme();
 }
 

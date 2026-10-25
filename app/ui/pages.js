@@ -6,7 +6,7 @@ import {
 } from '../store.js';
 import { Bar, Stars, Md, Inline } from './common.js';
 import { TaskCard, ResultTable, SchemaPanel, CodeEditor, toast, optionOrder } from './tasks.js';
-import { runSql, sqlReady } from '../engines/sql.js';
+import { runSql, sqlReady, compareResults } from '../engines/sql.js';
 import { runPython } from '../engines/py.js';
 import { DRILLS, makeDrill } from '../data/drills.js';
 
@@ -238,7 +238,8 @@ FROM users
 GROUP BY platform
 ORDER BY users DESC`;
 const SANDBOX_PY = `# Все таблицы доступны как DataFrame: users, events, orders, items,
-# experiment_users, marketing_spend, churn_features, promo_campaign, daily_orders.
+# experiment_users, marketing_spend, churn_features, promo_campaign,
+# reviews, payments, delivery_fee_test, daily_orders.
 # Ctrl+Enter — выполнить. Последнее значение result показывается ниже.
 result = orders.groupby('status')['revenue'].describe()`;
 
@@ -327,6 +328,12 @@ export function SelfTestPage() {
           } else if (t.type === 'sql') {
             const r = await runSql(t.solution);
             if (!r.rows.length) throw new Error('эталон вернул 0 строк');
+            // Заготовка не должна сама по себе проходить проверку — иначе задача решается нажатием кнопки.
+            if (t.starter) {
+              let same = false;
+              try { same = compareResults(await runSql(t.starter), r, { ordered: !!t.ordered, tol: t.tol ?? 1e-4 }).ok; } catch (e) { /* заготовка с ошибкой — это нормально */ }
+              if (same) throw new Error('заготовка уже даёт верный ответ');
+            }
             push({ id: n.id, i, ok: true, msg: `${r.rows.length} строк · ${r.cols.join(', ')} · первая: ${JSON.stringify(r.rows[0]).slice(0, 120)}` });
             continue;
           } else if (t.type === 'python') {

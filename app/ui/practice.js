@@ -67,6 +67,7 @@ function DailyTraining() {
   });
   const [pos, setPos] = useState(() => Math.min(Object.keys(train.results).length, train.keys.length));
   const [answered, setAnswered] = useState(false);
+  const modes = useRef({});
   const done = Object.keys(train.results).length;
   const correct = Object.values(train.results).filter(Boolean).length;
   const onAnswered = (key) => (ok) => {
@@ -76,7 +77,10 @@ function DailyTraining() {
   if (!train.keys.length) return html`<div class="empty big">Пока нечего тренировать — реши несколько задач на карте, и здесь появится ежедневная подборка.</div>`;
   const key = train.keys[pos];
   const cur = key && findTask(key);
-  const inSrs = key && s.srs[key];
+  // Режим карточки фиксируется при показе: иначе ошибка (которая кладёт задачу в повторение)
+  // переключала бы её в режим повторения, и повторная попытка засчитывалась как успешное повторение.
+  if (key && !(key in modes.current)) modes.current[key] = s.srs[key] ? 'review' : 'practice';
+  const inSrs = key && modes.current[key] === 'review';
   return html`
     <div class="train-head">
       <div class="ring-wrap"><${Ring} value=${done} max=${train.keys.length} /><div><div class="stat-v">${done}/${train.keys.length}</div><div class="stat-l">задач сегодня · верно ${correct}</div></div></div>

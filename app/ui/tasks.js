@@ -29,7 +29,8 @@ export function TaskCard({ node, index, task, mode = 'learn', onAnswered, label,
   const st = mode === 'exam' ? null : s.tasks[key];
   const answered = useRef(false);
   const report = (correct) => {
-    if (mode === 'review') recordReview(key, correct);
+    // В повторении засчитывается только первый ответ: ошибка и повторная попытка не двигают карточку вперёд.
+    if (mode === 'review') { if (!answered.current) recordReview(key, correct); }
     else if (mode === 'practice') { if (!answered.current) { const xp = recordPractice(key, correct); if (xp) toast(`+${xp} опыта`); } }
     else if (mode === 'learn') {
       const xp = recordAttempt(key, correct, { trial: node.isTrial });
@@ -41,20 +42,21 @@ export function TaskCard({ node, index, task, mode = 'learn', onAnswered, label,
   const reveal = () => {
     const t = getState().tasks[key];
     if (mode === 'learn' && (!t || !t.attempts)) recordAttempt(key, false, { trial: node.isTrial });
-    if (mode === 'exam' && !answered.current) { answered.current = true; onAnswered && onAnswered(false); }
+    // Вне обучения подсмотренный разбор до ответа считается ошибкой.
+    if (mode !== 'learn' && !answered.current) report(false);
   };
   const Comp = { single: Choice, multi: Choice, number: NumberTask, sql: CodeTask, python: CodeTask, case: CaseTask, order: OrderTask }[task.type];
   return html`
-    <section class=${cls('task', st && st.solved && 'solved')} id=${'task-' + index}>
+    <section class=${cls('task', mode === 'learn' && st && st.solved && 'solved')} id=${'task-' + index}>
       <div class="task-head">
         <span class="task-num">${label || `Задача ${index + 1}`}</span>
         <span class="badge">${TYPE_LABEL[task.type] || task.type}</span>
         ${task.bug && html`<span class="badge bug">найди баг</span>`}
-        ${st && st.solved ? html`<span class=${cls('badge', st.first ? 'ok' : 'ok-soft')}>${st.first ? 'с первой попытки' : 'решено'}</span>` : ''}
-        ${mode !== 'review' && s.srs[key] ? html`<span class="badge warn" title="Задача в очереди повторения">повторение</span>` : ''}
+        ${mode === 'learn' && st && st.solved ? html`<span class=${cls('badge', st.first ? 'ok' : 'ok-soft')}>${st.first ? 'с первой попытки' : 'решено'}</span>` : ''}
+        ${mode === 'learn' && s.srs[key] ? html`<span class="badge warn" title="Задача в очереди повторения">повторение</span>` : ''}
       </div>
       <${Md} src=${task.q} className="task-q" />
-      ${Comp ? html`<${Comp} task=${task} tkey=${key} report=${report} reveal=${reveal} />` : html`<div class="callout callout-warn">Неизвестный тип задачи: ${task.type}</div>`}
+      ${Comp ? html`<${Comp} task=${task} tkey=${key} report=${report} reveal=${reveal} mode=${mode} />` : html`<div class="callout callout-warn">Неизвестный тип задачи: ${task.type}</div>`}
     </section>`;
 }
 
@@ -267,16 +269,19 @@ export function CodeEditor({ value, onChange, onRun, onCheck, lang }) {
 
 const expCache = new Map();
 
-function CodeTask({ task, tkey, report, reveal }) {
+function CodeTask({ task, tkey, report, reveal, mode }) {
   const isSql = task.type === 'sql';
-  const s = getState();
-  const [code, setCode] = useState(s.drafts[tkey] ?? (task.starter || ''));
+  // Черновик сохраняется только при обычном решении в уроке. В повторении, тренировке и экзамене
+  // задача всегда начинается с заготовки — иначе там сразу виден прошлый ответ.
+  const persist = mode === 'learn';
+  const [code, setCode] = useState(() => (persist ? getState().drafts[tkey] ?? task.starter : task.starter) || '');
   const [busy, setBusy] = useState('');
   const [out, setOut] = useState(null);
   const [showSol, setShowSol] = useState(false);
   const timer = useRef(null);
   const change = (v) => {
     setCode(v);
+    if (!persist) return;
     clearTimeout(timer.current);
     timer.current = setTimeout(() => setDraft(tkey, v), 400);
   };

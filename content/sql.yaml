@@ -854,6 +854,7 @@ nodes:
           FROM events
           WHERE ts >= '2024-06-01' AND ts < '2024-07-01'
           GROUP BY event_name
+          ORDER BY step
         solution: |
           SELECT event_name AS step,
                  COUNT(DISTINCT user_id) AS users
