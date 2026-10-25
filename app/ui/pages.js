@@ -9,6 +9,7 @@ import { TaskCard, ResultTable, SchemaPanel, CodeEditor, toast, optionOrder } fr
 import { runSql, sqlReady, compareResults } from '../engines/sql.js';
 import { runPython } from '../engines/py.js';
 import { DRILLS, makeDrill } from '../data/drills.js';
+import { useSyncStatus, connect, disconnect, syncNow } from '../sync.js';
 
 // ───────── Повторение ─────────
 export function dueKeys(s) {
@@ -129,13 +130,61 @@ export function ProgressPage() {
   </main>`;
 }
 
+// ───────── Синхронизация между устройствами ─────────
+const TOKEN_URL = 'https://github.com/settings/tokens/new?scopes=gist&description=Product%20Analyst%20Trainer';
+
+function fmtTime(ms) {
+  const d = new Date(ms);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return sameDay ? `сегодня в ${hm}` : `${d.toLocaleDateString('ru-RU')} в ${hm}`;
+}
+
+function SyncPanel() {
+  const st = useSyncStatus();
+  const [token, setToken] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const onConnect = async () => {
+    setBusy(true); setErr('');
+    try { await connect(token); setToken(''); toast('Синхронизация включена'); } catch (e) { setErr(String(e.message || e)); }
+    setBusy(false);
+  };
+  if (st.state === 'off') {
+    return html`<section class="panel">
+      <h3>Синхронизация между устройствами</h3>
+      <p class="small muted">Прогресс будет храниться в приватном GitHub Gist и сам подтягиваться на телефоне и компьютере. Если решал на обоих, прогресс объединится: задачи, опыт, повторение и заметки не потеряются.</p>
+      <ol class="small" style="padding-left:20px;margin:8px 0">
+        <li>Открой <a href=${TOKEN_URL} target="_blank" rel="noopener">создание токена на GitHub</a> (нужно войти в аккаунт). Галочка уже стоит только на <b>gist</b> — больше ничего не отмечай.</li>
+        <li>В поле <b>Expiration</b> выбери срок, например год, внизу нажми <b>Generate token</b> и скопируй токен (начинается с <code>ghp_</code>).</li>
+        <li>Вставь его сюда и нажми «Подключить». На втором устройстве сделай то же самое — можно с тем же токеном.</li>
+      </ol>
+      <div class="num-row">
+        <input class="input" type="password" autocomplete="off" placeholder="ghp_…" value=${token} onInput=${(e) => setToken(e.target.value)} style="flex:1;min-width:0" />
+        <button class="btn primary" disabled=${busy || !token.trim()} onClick=${onConnect}>${busy ? 'Подключаю…' : 'Подключить'}</button>
+      </div>
+      ${err && html`<div class="verdict bad">${err}</div>`}
+      <p class="small muted">Токен хранится только в этом браузере и не попадает в экспорт прогресса. Право gist даёт доступ только к твоим gist-заметкам, не к репозиториям и не к аккаунту. Отозвать токен можно в любой момент в настройках GitHub.</p>
+    </section>`;
+  }
+  return html`<section class="panel">
+    <h3>Синхронизация между устройствами</h3>
+    <p>${st.state === 'busy' ? 'Синхронизирую…' : st.state === 'error' ? html`<span style="color:var(--bad)">${st.error}</span>` : st.last ? `Синхронизировано ${fmtTime(st.last)}` : 'Подключено'}</p>
+    <p class="small muted">Прогресс подтягивается при открытии тренажёра и при возвращении на вкладку, а отправляется через несколько секунд после каждого изменения. Тема и эффекты у каждого устройства свои.${st.gistId ? html` Файл прогресса — <a href=${`https://gist.github.com/${st.gistId}`} target="_blank" rel="noopener">приватный gist</a>.` : ''}</p>
+    <div class="task-actions">
+      <button class="btn primary" disabled=${st.state === 'busy'} onClick=${() => syncNow()}>Синхронизировать сейчас</button>
+      <button class="btn ghost" onClick=${() => { if (confirm('Отключить синхронизацию на этом устройстве? Прогресс здесь и в gist останется.')) disconnect(); }}>Отключить на этом устройстве</button>
+    </div>
+  </section>`;
+}
+
 // ───────── Настройки ─────────
 export function SettingsPage() {
   const s = useStore();
   const onImport = (e) => {
     const f = e.target.files[0];
     if (!f) return;
-    f.text().then((t) => { try { importJson(t); toast('Прогресс загружен'); } catch (err) { toast(err.message); } });
+    f.text().then((t) => { try { importJson(t); syncNow({ force: true }); toast('Прогресс загружен'); } catch (err) { toast(err.message); } });
     e.target.value = '';
   };
   const onExport = () => {
@@ -158,13 +207,14 @@ export function SettingsPage() {
       <h3>Эффекты</h3>
       ${seg('fx', [[true, 'Анимации и конфетти'], [false, 'Спокойный режим']])}
     </section>
+    <${SyncPanel} />
     <section class="panel">
       <h3>Прогресс</h3>
-      <p class="small muted">Хранится в браузере (localStorage). Чтобы перенести на другой компьютер — экспортируй файл и импортируй его там.</p>
+      <p class="small muted">Хранится в браузере (localStorage). Без синхронизации перенести его можно файлом: экспорт здесь, импорт на другом устройстве. Импорт заменяет прогресс, а не объединяет.</p>
       <div class="task-actions">
         <button class="btn primary" onClick=${onExport}>Экспорт прогресса</button>
         <label class="btn">Импорт прогресса<input type="file" accept="application/json" hidden onChange=${onImport} /></label>
-        <button class="btn danger" onClick=${() => { if (confirm('Стереть весь прогресс? Это нельзя отменить.')) { resetAll(); toast('Прогресс стёрт'); } }}>Стереть прогресс</button>
+        <button class="btn danger" onClick=${() => { if (confirm('Стереть весь прогресс? Это нельзя отменить. Если включена синхронизация, прогресс сотрётся и на других устройствах.')) { resetAll(); syncNow({ force: true }); toast('Прогресс стёрт'); } }}>Стереть прогресс</button>
       </div>
       <p class="small muted">Опыт ${s.xp} · задач с попытками ${Object.keys(s.tasks).length} · карточек повторения ${Object.keys(s.srs).length} · черновиков ${Object.keys(s.drafts).length}</p>
     </section>

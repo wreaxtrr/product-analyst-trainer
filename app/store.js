@@ -1,26 +1,46 @@
 import { useState, useEffect } from './lib.js';
 
-// Весь прогресс хранится в localStorage этого браузера. Перенос — через экспорт/импорт JSON в настройках.
+// Весь прогресс хранится в localStorage этого браузера. Перенос — экспорт/импорт JSON или синхронизация
+// через приватный GitHub Gist (app/sync.js).
 const KEY = 'pat-progress-v1';
+
+// Идентификатор устройства: опыт считается отдельно по устройствам (xpBy), чтобы при синхронизации
+// его можно было слить без двойного счёта — общий опыт равен сумме по устройствам.
+export const DEVICE = (() => {
+  try {
+    let id = localStorage.getItem('pat-device');
+    if (!id) { id = Math.random().toString(36).slice(2, 10); localStorage.setItem('pat-device', id); }
+    return id;
+  } catch (e) { return 'local'; }
+})();
 export const SRS_STEPS = [1, 3, 7, 14];
 export const XP = { first: 10, trialFirst: 20, later: 4, review: 3, scenario: 15 };
 export const XP_PER_LEVEL = 150;
 
 function fresh() {
   return {
-    v: 1, xp: 0, tasks: {}, srs: {}, days: [], drafts: {}, scen: {},
+    v: 1, xp: 0, xpBy: {}, tasks: {}, srs: {}, srsDone: {}, days: [], drafts: {}, scen: {},
     practice: {}, train: null, exams: [], drills: { solved: 0, tried: 0, streak: 0, best: 0 },
     notes: {}, project: {}, profile: { name: '' },
     settings: { theme: 'system', free: false, fx: true },
   };
 }
 
+// Дополняет состояние недостающими полями (файл мог сохранить старая версия).
+export function normalize(s) {
+  const f = fresh();
+  const out = { ...f, ...s, drills: { ...f.drills, ...(s.drills || {}) }, profile: { ...f.profile, ...(s.profile || {}) }, settings: { ...f.settings, ...(s.settings || {}) } };
+  // Прогресс из версии без счётчиков по устройствам: опыт кладём в общий «legacy». Если один и тот же
+  // старый прогресс окажется на двух устройствах, слияние возьмёт максимум, а не удвоит его.
+  if (!s.xpBy || !Object.keys(s.xpBy).length) out.xpBy = out.xp ? { legacy: out.xp } : {};
+  return out;
+}
+
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) || 'null');
     if (s && s.v === 1) {
-      const f = fresh();
-      return { ...f, ...s, drills: { ...f.drills, ...(s.drills || {}) }, profile: { ...f.profile, ...(s.profile || {}) }, settings: { ...f.settings, ...(s.settings || {}) } };
+      return normalize(s);
     }
   } catch (e) { /* пустой или битый localStorage — начинаем заново */ }
   return fresh();
@@ -39,11 +59,28 @@ function save() {
 
 export function getState() { return state; }
 
-export function update(fn) {
+// raw: true — массовая замена состояния (импорт, сброс, синхронизация), без учёта опыта по устройству.
+export function update(fn, { raw = false } = {}) {
+  const xp0 = state.xp;
   fn(state);
+  if (!raw && state.xp !== xp0) state.xpBy = { ...state.xpBy, [DEVICE]: (state.xpBy[DEVICE] || 0) + state.xp - xp0 };
   state = { ...state };
   save();
-  listeners.forEach((l) => l());
+  listeners.forEach((l) => l(raw));
+}
+
+// Подписка на изменения вне компонентов (синхронизация). Колбэк получает raw.
+export function subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); }
+
+// Полная замена состояния (результат слияния с другим устройством). Настройки остаются свои.
+export function replaceState(next) {
+  update((s) => { Object.assign(s, normalize({ ...next, settings: s.settings })); }, { raw: true });
+}
+
+// Карточка повторения: метка времени t нужна, чтобы при слиянии побеждало последнее изменение.
+function setCard(s, key, card) {
+  s.srs = { ...s.srs, [key]: { ...card, t: Date.now() } };
+  if (s.srsDone[key]) { const d = { ...s.srsDone }; delete d[key]; s.srsDone = d; }
 }
 
 export function useStore() {
@@ -85,9 +122,7 @@ export function recordAttempt(key, correct, { trial = false } = {}) {
       gained = t.first ? (trial ? XP.trialFirst : XP.first) : XP.later;
       s.xp += gained;
     }
-    if (!correct && t.attempts === 1 && !s.srs[key]) {
-      s.srs = { ...s.srs, [key]: { due: addDays(today(), SRS_STEPS[0]), step: 0 } };
-    }
+    if (!correct && t.attempts === 1 && !s.srs[key]) setCard(s, key, { due: addDays(today(), SRS_STEPS[0]), step: 0 });
     t.at = Date.now();
     s.tasks = { ...s.tasks, [key]: t };
     markDay(s);
@@ -99,16 +134,15 @@ export function recordReview(key, correct) {
   update((s) => {
     const c = s.srs[key];
     if (!c) return;
-    const srs = { ...s.srs };
     if (correct) {
       const step = c.step + 1;
-      if (step >= SRS_STEPS.length) delete srs[key];
-      else srs[key] = { due: addDays(today(), SRS_STEPS[step]), step };
+      if (step >= SRS_STEPS.length) {
+        // Карточка выучена: удаляем и запоминаем когда — чтобы другое устройство не вернуло её при слиянии.
+        const srs = { ...s.srs }; delete srs[key]; s.srs = srs;
+        s.srsDone = { ...s.srsDone, [key]: Date.now() };
+      } else setCard(s, key, { due: addDays(today(), SRS_STEPS[step]), step });
       s.xp += XP.review;
-    } else {
-      srs[key] = { due: addDays(today(), SRS_STEPS[0]), step: 0 };
-    }
-    s.srs = srs;
+    } else setCard(s, key, { due: addDays(today(), SRS_STEPS[0]), step: 0 });
     markDay(s);
   });
 }
@@ -121,7 +155,7 @@ export function recordPractice(key, correct) {
     const p = s.practice[key] || {};
     if (correct && p.day !== day) { gained = XP.review; s.xp += gained; }
     s.practice = { ...s.practice, [key]: { day, ok: !!correct, n: (p.n || 0) + 1 } };
-    if (!correct) s.srs = { ...s.srs, [key]: { due: addDays(day, SRS_STEPS[0]), step: 0 } };
+    if (!correct) setCard(s, key, { due: addDays(day, SRS_STEPS[0]), step: 0 });
     markDay(s);
   });
   return gained;
@@ -131,7 +165,7 @@ export function setTrain(train) { update((s) => { s.train = train; }); }
 
 export function recordExam(result) {
   update((s) => {
-    s.exams = [...s.exams, result].slice(-30);
+    s.exams = [...s.exams, { ...result, at: Date.now() }].slice(-30);
     s.xp += Math.round(result.score * 2);
     markDay(s);
   });
@@ -221,19 +255,12 @@ export function importJson(text) {
   const s = JSON.parse(text);
   if (!s || s.v !== 1 || typeof s.tasks !== 'object') throw new Error('Это не файл прогресса тренажёра.');
   // Файл мог быть выгружен старой версией — недостающие поля и настройки берутся по умолчанию.
-  const f = fresh();
-  update((st) => {
-    Object.assign(st, f, s, {
-      drills: { ...f.drills, ...(s.drills || {}) },
-      profile: { ...f.profile, ...(s.profile || {}) },
-      settings: { ...f.settings, ...(s.settings || {}) },
-    });
-  });
+  update((st) => { Object.assign(st, normalize(s)); }, { raw: true });
   applyTheme();
 }
 
 export function resetAll() {
   // Заметки и имя — то, что человек написал сам, — сброс прогресса не трогает.
   const { settings, notes, profile } = state;
-  update((s) => { Object.assign(s, fresh(), { settings, notes, profile }); });
+  update((s) => { Object.assign(s, fresh(), { settings, notes, profile }); }, { raw: true });
 }

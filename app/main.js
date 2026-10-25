@@ -8,6 +8,7 @@ import { NodePage } from './ui/node.js';
 import { PracticePage } from './ui/practice.js';
 import { CommandPalette } from './ui/palette.js';
 import { CoursePage } from './ui/course.js';
+import { startSync } from './sync.js';
 import { ProgressPage, SettingsPage, MetricsPage, SandboxPage, SelfTestPage, GlossaryPage, dueKeys } from './ui/pages.js';
 
 // Конфетти при прохождении узла — короткая анимация на canvas.
@@ -91,6 +92,7 @@ loadCourse()
     const root = document.getElementById('app');
     root.textContent = '';
     render(html`<${App} />`, root);
+    startSync();
   })
   .catch((e) => {
     console.error(e);
