@@ -4,7 +4,7 @@
 title: Product Analyst Trainer
 scenarios: scenarios
 glossary: glossary
-files: [sql, more_sql, stats, more_stats, metrics, more_metrics, unit, growth, ab, more_ab, monitoring, python, ml, more_ml, ds, more_ds, causal, viz, product, more_product, data, interview, voc, eng, trials]
+files: [sql, more_sql, stats, more_stats, metrics, more_metrics, unit, growth, ab, more_ab, monitoring, python, ml, more_ml, ds, more_ds, causal, viz, product, more_product, data, interview, voc, eng, tbank, trials]
 deep: [sql, stats, metrics, unit, ab, python, ml, ds, causal, viz, product, interview, extra]
 acts:
   - id: a1
@@ -100,6 +100,7 @@ acts:
       - "Понимать модель данных хранилища, контроль качества и особенности ClickHouse"
       - "Решать типовые SQL- и стат-задачи собеседования и продуктовые кейсы"
       - "В боковых ветках — Airflow, инкрементальные витрины, dbt, BI; опросы, отзывы и качественные исследования"
+      - "В боковой ветке «Собеседование в Т-Банк» — SQL-ловушки вступительного теста, задачи на логику и вероятность, продуктовые кейсы и каркас их разбора"
     tracks:
       - branch: product
         nodes: [product.drop, product.prioritize, product.pricing, product.stakeholders, product.casestudy]
@@ -115,4 +116,8 @@ acts:
         side: true
         level: 9
         nodes: [voc.surveys, voc.reviews, voc.research]
+      - branch: tbank
+        side: true
+        level: 8
+        nodes: [tb.sql, tb.logic, tb.cases, tb.framework]
     trial: trial.5

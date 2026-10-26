@@ -107,7 +107,8 @@ export function Ring({ value, max, size = 64 }) {
 const FORMATS = [
   { id: 'sql', title: 'SQL-секция', desc: '5 SQL-задач разной сложности', minutes: 40, pick: { sql: 5 } },
   { id: 'stats', title: 'Статистика и A/B', desc: '12 вопросов и расчётов по статистике, экспериментам и метрикам', minutes: 25, pick: { quiz: 12 }, branches: ['stats', 'ab', 'metrics', 'unit', 'interview', 'causal', 'monitoring'] },
-  { id: 'product', title: 'Продуктовый кейс', desc: '8 вопросов: метрики, кейсы, приоритизация, причинность', minutes: 25, pick: { quiz: 8 }, branches: ['metrics', 'product', 'causal', 'viz', 'unit', 'growth', 'voc', 'eng'] },
+  { id: 'product', title: 'Продуктовый кейс', desc: '8 вопросов: метрики, кейсы, приоритизация, причинность', minutes: 25, pick: { quiz: 8 }, branches: ['metrics', 'product', 'causal', 'viz', 'unit', 'growth', 'voc', 'eng', 'tbank'] },
+  { id: 'tbank', title: 'Тест Т-Банка', desc: '12 вопросов: SQL-ловушки, логика, вероятность, продуктовые кейсы', minutes: 20, pick: { quiz: 12 }, branches: ['tbank'] },
   { id: 'ml', title: 'ML и Data Science', desc: '8 вопросов + 1 задача на Python', minutes: 35, pick: { quiz: 8, python: 1 }, branches: ['ml', 'ds', 'python'] },
   { id: 'full', title: 'Полный мок-интервью', desc: '3 SQL + 10 вопросов + 1 Python', minutes: 70, pick: { sql: 3, quiz: 10, python: 1 } },
 ];

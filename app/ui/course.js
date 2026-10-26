@@ -115,9 +115,9 @@ function Program() {
 // ═════════════ Уровень Middle ═════════════
 // Матрица компетенций: что ждут от джуна и мидла и какие ветки курса это закрывают.
 const COMPETENCIES = [
-  { name: 'SQL', branches: ['sql'], extra: ['interview.sql', 'data.clickhouse'],
+  { name: 'SQL', branches: ['sql'], extra: ['interview.sql', 'data.clickhouse', 'tb.sql'],
     jun: 'SELECT, JOIN, GROUP BY по готовой постановке', mid: 'Оконные функции, когорты, воронки, дедупликация, быстрые запросы в ClickHouse; сам проверяет данные перед расчётом' },
-  { name: 'Статистика', branches: ['stats'], extra: ['interview.stats'],
+  { name: 'Статистика', branches: ['stats'], extra: ['interview.stats', 'tb.logic'],
     jun: 'Среднее, медиана, знает, что такое p-value', mid: 'Выбирает критерий под данные, считает интервалы и мощность, бутстрап, байесовский подход' },
   { name: 'A/B-тесты', branches: ['ab'],
     jun: 'Считает результат готового теста', mid: 'Дизайн, MDE и длительность, SRM, ratio-метрики, CUPED, подглядывание, вывод с решением' },
@@ -133,12 +133,12 @@ const COMPETENCIES = [
     jun: 'Пишет запросы к готовым таблицам', mid: 'Витрины и качество данных, Airflow, инкремент и поздние данные, dbt и тесты, git' },
   { name: 'Дашборды, BI, мониторинг', branches: ['viz', 'monitoring'], extra: ['eng.bi'],
     jun: 'Строит график по просьбе', mid: 'Дашборды под решения, семантический слой, алерты без шума, разбор инцидента до причины' },
-  { name: 'Продукт и коммуникация', branches: ['product', 'voc'],
+  { name: 'Продукт и коммуникация', branches: ['product', 'voc'], extra: ['tb.cases', 'tb.framework'],
     jun: 'Отвечает на поставленный вопрос', mid: 'Сам формулирует и приоритизирует гипотезы, работает со стейкхолдерами, опросами и исследователями' },
 ];
 
 // Ветки, добавленные последними, — помечаются на странице, чтобы их было легко найти.
-const NEW_SIDE = ['growth', 'monitoring', 'eng', 'voc'];
+const NEW_SIDE = ['growth', 'monitoring', 'eng', 'voc', 'tbank'];
 
 function competencyNodes(c) {
   return allNodesOrdered().filter((n) => !n.isTrial && (c.branches.includes(n.branch) || (c.extra || []).includes(n.id)));
