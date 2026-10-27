@@ -1,11 +1,11 @@
-import { html, cls, useState, useMemo, plural } from '../lib.js';
+import { html, cls, useState, useMemo, useRef, plural } from '../lib.js';
 import { course, nodeStats, findTask, allNodesOrdered, taskKey } from '../content.js';
 import {
   useStore, today, level, XP_PER_LEVEL, streak, bestStreak, setSetting, exportJson, importJson, resetAll,
   recordScenario, SRS_STEPS, getState, addDays, setDraft,
 } from '../store.js';
 import { Bar, Stars, Md, Inline } from './common.js';
-import { TaskCard, ResultTable, SchemaPanel, CodeEditor, toast, optionOrder } from './tasks.js';
+import { TaskCard, ResultTable, SchemaPanel, CodeEditor, SqlError, SqlWarnings, PyError, toast, optionOrder } from './tasks.js';
 import { runSql, sqlReady, compareResults } from '../engines/sql.js';
 import { runPython } from '../engines/py.js';
 import { DRILLS, makeDrill } from '../data/drills.js';
@@ -301,22 +301,25 @@ export function SandboxPage() {
   const [code, setCode] = useState({ sql: s.drafts['__sandbox_sql'] ?? SANDBOX_SQL, python: s.drafts['__sandbox_py'] ?? SANDBOX_PY });
   const [busy, setBusy] = useState('');
   const [out, setOut] = useState(null);
+  const ed = useRef(null);
   const run = async () => {
     setOut(null);
+    const sel = lang === 'sql' && ed.current ? ed.current.selection() : null;
+    const src = sel ? sel.text : (ed.current && lang === 'sql' ? ed.current.value() : code.sql);
     try {
       if (lang === 'sql') {
         setBusy(sqlReady() ? 'Выполняю…' : 'Загружаю движок…');
-        const r = await runSql(code.sql);
-        setOut({ sql: r });
+        const r = await runSql(src);
+        setOut({ sql: r, partial: !!sel, src });
       } else {
         const r = await runPython({ code: code.python, variable: 'result', onlyRun: true, packages: /sklearn/.test(code.python) ? ['scikit-learn'] : /scipy/.test(code.python) ? ['scipy'] : [] }, setBusy);
         setOut({ py: r });
       }
-    } catch (e) { setOut({ err: String(e.message || e) }); }
+    } catch (e) { setOut({ err: String(e.message || e), src, base: sel ? sel.from : 0 }); }
     setBusy('');
   };
   const change = (v) => {
-    setCode({ ...code, [lang]: v });
+    setCode((c) => ({ ...c, [lang]: v }));
     clearTimeout(draftTimer);
     draftTimer = setTimeout(() => setDraft(lang === 'sql' ? '__sandbox_sql' : '__sandbox_py', v), 400);
   };
@@ -325,11 +328,11 @@ export function SandboxPage() {
     <p class="muted">Свободные запросы к тем же данным, на которых построены задачи: сервис доставки продуктов «Корзинка», январь–июль 2024.</p>
     <div class="seg">${[['sql', 'SQL (DuckDB)'], ['python', 'Python (pandas)']].map(([v, t]) => html`<button class=${cls(lang === v && 'active')} onClick=${() => { setLang(v); setOut(null); }}>${t}</button>`)}</div>
     <${SchemaPanel} open=${false} />
-    <${CodeEditor} value=${code[lang]} onChange=${change} onRun=${run} onCheck=${run} lang=${lang} />
+    <${CodeEditor} value=${code[lang]} onChange=${change} onRun=${run} onCheck=${run} lang=${lang} api=${ed} name=${lang === 'sql' ? 'sandbox.sql' : 'sandbox.py'} />
     <div class="task-actions"><button class="btn primary" onClick=${run} disabled=${!!busy}>Выполнить</button>${busy && html`<span class="busy"><span class="spinner" />${busy}</span>`}</div>
-    ${out && out.err && html`<pre class="err">${out.err}</pre>`}
-    ${out && out.sql && html`<div class="hint">${out.sql.rows.length} строк · ${Math.round(out.sql.ms)} мс</div><${ResultTable} cols=${out.sql.cols} rows=${out.sql.rows} limit=${200} />`}
-    ${out && out.py && html`${out.py.err && html`<pre class="err">${out.py.err}</pre>`}${out.py.out && html`<div class="out-label">Вывод</div><pre class="out">${out.py.out}</pre>`}${out.py.preview && html`<div class="out-label">result =</div><pre class="out">${out.py.preview}</pre>`}`}
+    ${out && out.err && (lang === 'sql' ? html`<${SqlError} msg=${out.err} sql=${out.src} base=${out.base} api=${ed} />` : html`<div class="verdict bad"><${PyError} err=${out.err} api=${ed} /></div>`)}
+    ${out && out.sql && html`<${SqlWarnings} sql=${out.src} /><div class="hint">${out.partial ? 'Выполнен выделенный фрагмент · ' : ''}${out.sql.rows.length} строк · ${Math.round(out.sql.ms)} мс</div><${ResultTable} cols=${out.sql.cols} rows=${out.sql.rows} limit=${200} />`}
+    ${out && out.py && html`${out.py.err && html`<${PyError} err=${out.py.err} api=${ed} />`}${out.py.out && html`<div class="out-label">Вывод</div><pre class="out">${out.py.out}</pre>`}${out.py.preview && html`<div class="out-label">result =</div><pre class="out">${out.py.preview}</pre>`}`}
   </main>`;
 }
 

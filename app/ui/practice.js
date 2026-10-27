@@ -4,7 +4,7 @@ import { useStore, getState, today, setTrain, recordExam, recordDrill } from '..
 import { mulberry32 } from '../data/generate.js';
 import { randomDrill } from '../data/drills.js';
 import { runSql, compareResults, sqlReady } from '../engines/sql.js';
-import { TaskCard, CodeEditor, ResultTable, SchemaPanel } from './tasks.js';
+import { TaskCard, CodeEditor, ResultTable, SchemaPanel, SqlError, SqlWarnings } from './tasks.js';
 import { Md, Bar } from './common.js';
 import { ReviewPage, dueKeys } from './pages.js';
 import { navigate } from '../router.js';
@@ -207,20 +207,23 @@ function Marathon() {
   const [showSol, setShowSol] = useState(false);
   const counted = useRef(false);
   const expRef = useRef(null);
+  const ed = useRef(null);
   const reset = () => { setSeed(seed + 7919); setCode('SELECT\n'); setOut(null); setShowSol(false); counted.current = false; expRef.current = null; };
   const exec = async (check) => {
     setOut(null);
+    const sel = !check && ed.current ? ed.current.selection() : null;
+    const src = sel ? sel.text : (ed.current ? ed.current.value() : code);
     try {
       setBusy(sqlReady() ? 'Выполняю…' : 'Загружаю движок…');
-      const user = await runSql(code);
+      const user = await runSql(src);
       let verdict = null;
       if (check) {
         if (!expRef.current) expRef.current = await runSql(drill.sql);
         verdict = compareResults(user, expRef.current, { ordered: drill.ordered });
         if (!counted.current) { counted.current = true; recordDrill(verdict.ok); }
       }
-      setOut({ user, verdict });
-    } catch (e) { setOut({ err: String(e.message || e) }); }
+      setOut({ user, verdict, src });
+    } catch (e) { setOut({ err: String(e.message || e), sql: src, base: sel ? sel.from : 0 }); }
     setBusy('');
   };
   const d = s.drills;
@@ -234,8 +237,8 @@ function Marathon() {
       <div class="task-head"><span class="task-num">${drill.topic}</span><span class="badge">${'★'.repeat(drill.level)}</span>${counted.current && out && out.verdict ? html`<span class=${cls('badge', out.verdict.ok ? 'ok' : 'warn')}>${out.verdict.ok ? 'засчитано' : 'серия сброшена'}</span>` : ''}</div>
       <${Md} src=${drill.q} className="task-q" />
       <${SchemaPanel} />
-      <div class="hint">${drill.ordered ? 'Порядок строк важен' : 'Порядок строк не важен'} · засчитывается первая проверка · Ctrl+Enter — проверить</div>
-      <${CodeEditor} value=${code} onChange=${setCode} onRun=${() => exec(false)} onCheck=${() => exec(true)} lang="sql" />
+      <div class="hint">${drill.ordered ? 'Порядок строк важен' : 'Порядок строк не важен'} · засчитывается первая проверка</div>
+      <${CodeEditor} value=${code} onChange=${setCode} onRun=${() => exec(false)} onCheck=${() => exec(true)} lang="sql" api=${ed} />
       <div class="task-actions">
         <button class="btn primary" onClick=${() => exec(true)} disabled=${!!busy}>Проверить</button>
         <button class="btn" onClick=${() => exec(false)} disabled=${!!busy}>Выполнить</button>
@@ -243,9 +246,9 @@ function Marathon() {
         <button class="btn ghost" onClick=${reset}>Следующая задача →</button>
         ${busy && html`<span class="busy"><span class="spinner" />${busy}</span>`}
       </div>
-      ${out && out.err && html`<div class="verdict bad"><pre class="err">${out.err}</pre></div>`}
+      ${out && out.err && html`<${SqlError} msg=${out.err} sql=${out.sql} base=${out.base} api=${ed} />`}
       ${out && out.verdict && html`<div class=${cls('verdict', out.verdict.ok ? 'good' : 'bad')}>${out.verdict.ok ? 'Верно' : 'Не совпадает с эталоном'}${out.verdict.msg ? html`<div class="vmsg">${out.verdict.msg}</div>` : ''}</div>`}
-      ${out && out.user && html`<div class="hint">${out.user.rows.length} строк · ${Math.round(out.user.ms)} мс</div><${ResultTable} cols=${out.user.cols} rows=${out.user.rows} />`}
+      ${out && out.user && html`<${SqlWarnings} sql=${out.src} /><div class="hint">${out.user.rows.length} строк · ${Math.round(out.user.ms)} мс</div><${ResultTable} cols=${out.user.cols} rows=${out.user.rows} />`}
       ${showSol && html`<div class="explain"><div class="explain-title">Эталонное решение</div><pre class="code"><code>${drill.sql}</code></pre></div>`}
     </section>`;
 }

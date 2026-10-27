@@ -5,6 +5,9 @@ import { recordAttempt, recordReview, recordPractice, setDraft, getState, useSto
 import { runSql, compareResults, sqlReady, fmtCell, resetDb } from '../engines/sql.js';
 import { runPython, pyStarted } from '../engines/py.js';
 import { SCHEMA, TABLE_DOCS, COLUMN_VALUES, mulberry32 } from '../data/generate.js';
+import { CodeEditor, SqlError, SqlWarnings, PyError } from './editor.js';
+
+export { CodeEditor, SqlError, SqlWarnings, PyError };
 
 export function toast(text) { dispatchEvent(new CustomEvent('toast', { detail: text })); }
 
@@ -245,28 +248,6 @@ export function SchemaPanel({ tables, open = false }) {
   </details>`;
 }
 
-export function CodeEditor({ value, onChange, onRun, onCheck, lang }) {
-  const ref = useRef(null);
-  const lines = Math.max(7, Math.min(28, String(value).split('\n').length + 1));
-  const onKeyDown = (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault();
-      if (e.shiftKey && onRun) onRun(); else (onCheck || onRun)();
-      return;
-    }
-    if (e.key === 'Tab' && !e.shiftKey) {
-      e.preventDefault();
-      const el = e.target, a = el.selectionStart, b = el.selectionEnd;
-      const ind = lang === 'python' ? '    ' : '  ';
-      const nv = el.value.slice(0, a) + ind + el.value.slice(b);
-      onChange(nv);
-      requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = a + ind.length; });
-    }
-  };
-  return html`<textarea ref=${ref} class="code-editor" spellcheck="false" autocapitalize="off" autocomplete="off"
-    rows=${lines} value=${value} onInput=${(e) => onChange(e.target.value)} onKeyDown=${onKeyDown} />`;
-}
-
 const expCache = new Map();
 
 function CodeTask({ task, tkey, report, reveal, mode }) {
@@ -279,6 +260,7 @@ function CodeTask({ task, tkey, report, reveal, mode }) {
   const [out, setOut] = useState(null);
   const [showSol, setShowSol] = useState(false);
   const timer = useRef(null);
+  const ed = useRef(null);
   const change = (v) => {
     setCode(v);
     if (!persist) return;
@@ -290,10 +272,13 @@ function CodeTask({ task, tkey, report, reveal, mode }) {
   const exec = async (check) => {
     if (busy) return;
     setOut(null);
+    // «Выполнить» с выделением — выполняется только выделенный фрагмент, как в IDE.
+    const sel = !check && isSql && ed.current ? ed.current.selection() : null;
+    const src = sel ? sel.text : (ed.current ? ed.current.value() : code);
     try {
       if (isSql) {
         setBusy(sqlReady() ? 'Выполняю…' : 'Загружаю движок, первый запуск занимает несколько секунд…');
-        const user = await runSql(code);
+        const user = await runSql(src);
         let verdict = null;
         if (check) {
           let exp = expCache.get(tkey);
@@ -301,11 +286,11 @@ function CodeTask({ task, tkey, report, reveal, mode }) {
           verdict = compareResults(user, exp, { ordered: !!task.ordered, tol: task.tol ?? 1e-4 });
           report(verdict.ok);
         }
-        setOut({ kind: 'sql', user, verdict });
+        setOut({ kind: 'sql', user, verdict, partial: !!sel, src });
       } else {
         setBusy(pyStarted() ? 'Выполняю…' : 'Загружаю Python, первый запуск занимает 10–20 секунд…');
         const r = await runPython({
-          code, solution: task.solution, test: task.test, variable: task.variable === undefined ? 'result' : task.variable,
+          code: src, solution: task.solution, test: task.test, variable: task.variable === undefined ? 'result' : task.variable,
           ordered: task.ordered !== false, tol: task.tol ?? 1e-4, packages: task.packages || [], onlyRun: !check,
         }, (m) => setBusy(m));
         if (check) report(!!r.ok);
@@ -314,7 +299,7 @@ function CodeTask({ task, tkey, report, reveal, mode }) {
     } catch (e) {
       const msg = String(e && e.message ? e.message : e);
       if (check && !/только SELECT|пустой|один запрос/.test(msg)) report(false);
-      setOut({ kind: 'error', msg });
+      setOut({ kind: 'error', msg, sql: src, base: sel ? sel.from : 0 });
     } finally {
       setBusy('');
     }
@@ -324,8 +309,8 @@ function CodeTask({ task, tkey, report, reveal, mode }) {
 
   return html`
     ${isSql ? html`<${SchemaPanel} tables=${task.tables} />` : task.tables ? html`<div class="hint">Доступные DataFrame: ${task.tables.map((t) => html`<code>${t}</code> `)}${task.packages && task.packages.length ? html` · пакеты: ${task.packages.join(', ')}` : ''}</div>` : ''}
-    <div class="hint">${isSql ? (task.ordered ? 'Порядок строк важен' : 'Порядок строк не важен') + ' · DuckDB SQL' : `Ответ положи в переменную ${task.variable || 'result'}`} · Ctrl+Enter — проверить, Ctrl+Shift+Enter — просто выполнить</div>
-    <${CodeEditor} value=${code} onChange=${change} onRun=${() => exec(false)} onCheck=${() => exec(true)} lang=${isSql ? 'sql' : 'python'} />
+    <div class="hint">${isSql ? (task.ordered ? 'Порядок строк важен' : 'Порядок строк не важен') : `Ответ положи в переменную ${task.variable || 'result'}`}</div>
+    <${CodeEditor} value=${code} onChange=${change} onRun=${() => exec(false)} onCheck=${() => exec(true)} lang=${isSql ? 'sql' : 'python'} tables=${task.tables} api=${ed} />
     <div class="task-actions">
       <button class="btn primary" onClick=${() => exec(true)} disabled=${!!busy}>Проверить</button>
       <button class="btn" onClick=${() => exec(false)} disabled=${!!busy}>Выполнить</button>
@@ -333,15 +318,18 @@ function CodeTask({ task, tkey, report, reveal, mode }) {
       ${!showSol && html`<button class="btn ghost" onClick=${showSolution}>Показать разбор</button>`}
       ${busy && html`<span class="busy"><span class="spinner" />${busy}</span>`}
     </div>
-    ${out && out.kind === 'error' && html`<div class="verdict bad"><pre class="err">${out.msg}</pre>
-      ${isSql && /does not exist|Catalog Error/.test(out.msg) ? html`<button class="btn ghost small" onClick=${() => resetDb().then(() => toast('База перезагружена'))}>Перезагрузить базу</button>` : ''}</div>`}
+    ${out && out.kind === 'error' && (isSql
+      ? html`<${SqlError} msg=${out.msg} sql=${out.sql} base=${out.base} api=${ed} />
+        ${/Table with name (users|items|events|orders|experiment_users|marketing_spend|churn_features|promo_campaign|reviews|payments|delivery_fee_test) does not exist/.test(out.msg) ? html`<button class="btn ghost small" onClick=${() => resetDb().then(() => toast('База перезагружена'))}>Перезагрузить базу</button>` : ''}`
+      : html`<div class="verdict bad"><${PyError} err=${out.msg} api=${ed} /></div>`)}
     ${out && out.kind === 'sql' && html`
       ${out.verdict && html`<div class=${cls('verdict', out.verdict.ok ? 'good' : 'bad')}>${out.verdict.ok ? 'Верно' : 'Не совпадает с эталоном'}${out.verdict.msg ? html`<div class="vmsg">${out.verdict.msg}</div>` : ''}</div>`}
-      <div class="hint">${out.user.rows.length} ${out.user.rows.length === 1 ? 'строка' : 'строк'} · ${Math.round(out.user.ms)} мс</div>
+      <${SqlWarnings} sql=${out.src} />
+      <div class="hint">${out.partial ? 'Выполнен выделенный фрагмент · ' : ''}${out.user.rows.length} ${out.user.rows.length === 1 ? 'строка' : 'строк'} · ${Math.round(out.user.ms)} мс</div>
       <${ResultTable} cols=${out.user.cols} rows=${out.user.rows} />`}
     ${out && out.kind === 'py' && html`
       ${out.check && html`<div class=${cls('verdict', out.r.ok ? 'good' : 'bad')}>${out.r.ok ? 'Верно' : 'Не сходится'}${out.r.msg ? html`<div class="vmsg">${out.r.msg}</div>` : ''}</div>`}
-      ${out.r.err && html`<pre class="err">${out.r.err}</pre>`}
+      ${out.r.err && html`<${PyError} err=${out.r.err} api=${ed} />`}
       ${out.r.out && html`<div class="out-label">Вывод</div><pre class="out">${out.r.out}</pre>`}
       ${out.r.preview && html`<div class="out-label">${task.variable || 'result'} =</div><pre class="out">${out.r.preview}</pre>`}`}
     ${showSol && html`<div class="explain">

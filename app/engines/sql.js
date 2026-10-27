@@ -39,13 +39,14 @@ export async function resetDb() {
   }
 }
 
-function stripComments(sql) {
-  return sql.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+// Комментарии и содержимое строк убираются — чтобы «;» или «--» внутри строки не мешали проверкам.
+function scrub(sql) {
+  return sql.replace(/'(?:[^']|'')*'|--[^\n]*|\/\*[\s\S]*?\*\//g, (m) => (m[0] === "'" ? "''" : ' '));
 }
 
 // Пускаем только читающие запросы: так база не сломается от случайного DROP.
 export function validateSql(sql) {
-  const s = stripComments(sql).trim().replace(/;\s*$/, '');
+  const s = scrub(sql).trim().replace(/;\s*$/, '');
   if (!s) return 'Запрос пустой.';
   if (s.includes(';')) return 'Нужен один запрос — без нескольких операторов через «;».';
   if (!/^(select|with|from|\()/i.test(s)) return 'Здесь можно выполнять только SELECT-запросы (можно начинать с WITH).';
@@ -73,7 +74,9 @@ export async function runSql(sql) {
   if (err) throw new Error(err);
   const conn = await getConn();
   const t0 = performance.now();
-  const table = await conn.query(stripComments(sql).trim().replace(/;\s*$/, ''));
+  // Запрос выполняется как написан — с комментариями и отступами, чтобы строка и позиция в сообщении
+  // об ошибке совпадали с редактором. Завершающая «;» заменяется пробелом.
+  const table = await conn.query(sql.replace(/;((?:\s|--[^\n]*|\/\*[\s\S]*?\*\/)*)$/, ' $1'));
   const fields = table.schema.fields.map((f) => ({ name: f.name, type: String(f.type) }));
   const vecs = fields.map((_, i) => table.getChildAt(i));
   const rows = [];
