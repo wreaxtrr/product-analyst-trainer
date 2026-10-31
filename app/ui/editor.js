@@ -206,6 +206,8 @@ function buildExtensions(cm, { lang, tables, cbs, onDoc, onPos, diagFlag }) {
   }
 
   const runKeys = S.Prec.highest(V.keymap.of([
+    // Tab, как в IDE, вставляет выбранную подсказку; если подсказок нет — делает отступ.
+    { key: 'Tab', run: A.acceptCompletion },
     { key: 'Mod-Enter', run: () => { (cbs.current.onCheck || cbs.current.onRun)?.(); return true; } },
     { key: 'Shift-Mod-Enter', run: () => { cbs.current.onRun?.(); return true; } },
     { key: 'Shift-Alt-f', run: () => { cbs.current.format?.(); return true; } },
